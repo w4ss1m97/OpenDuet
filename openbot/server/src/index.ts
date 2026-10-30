@@ -2782,6 +2782,7 @@ const app = createApp(
     openduet: {
       pages: openDuetPages,
       tasks: openDuetTasks,
+      items: intakeItems,
       // The checklist onboarding ends on. Facts and verdicts about this configuration, never values.
       setup: createSetupSources({
         productName: tenantPackage.productName,
