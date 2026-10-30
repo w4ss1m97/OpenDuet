@@ -54,3 +54,18 @@ export function planReminders(items: Item[], now: Date): PlannedReminder[] {
     .sort((a, b) => a.at.getTime() - b.at.getTime())
     .slice(0, MAX_SCHEDULED);
 }
+
+/** The scheduled notifications that belong to one item (ids are `itemId:ISO`). */
+export function remindersOfItem(scheduledIds: string[], itemId: string): string[] {
+  return scheduledIds.filter((id) => id.startsWith(`${itemId}:`));
+}
+
+/** Minutes still to wait so a snooze ends one hour after the tap, even when sent later. */
+export function snoozeMinutesLeft(tapAt: number, now: number): number {
+  return Math.max(1, Math.ceil((tapAt + 3600_000 - now) / 60_000));
+}
+
+/** Only a failed connection is worth retrying; a refusal from the server would fail again. */
+export function shouldRetry(error: unknown): boolean {
+  return error instanceof TypeError;
+}

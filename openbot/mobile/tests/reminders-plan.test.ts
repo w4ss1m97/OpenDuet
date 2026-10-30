@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { type Item, MAX_SCHEDULED, planReminders } from "../src/reminders-plan";
+import {
+  type Item,
+  MAX_SCHEDULED,
+  planReminders,
+  remindersOfItem,
+  shouldRetry,
+  snoozeMinutesLeft,
+} from "../src/reminders-plan";
 
 const now = new Date("2026-11-07T08:00:00Z");
 const day = 24 * 3600_000;
@@ -68,4 +75,21 @@ test("ids are stable per item and time", () => {
   const at = new Date(now.getTime() + day);
   const [p] = planReminders([item("x", [at])], now);
   expect(p?.id).toBe(`x:${at.toISOString()}`);
+});
+
+test("Fait cancels every reminder of that item and only those", () => {
+  expect(remindersOfItem(["a:1", "a:2", "ab:1", "b:1"], "a")).toEqual(["a:1", "a:2"]);
+});
+
+test("a snooze replayed later still ends one hour after the tap", () => {
+  const tap = Date.parse("2026-11-07T08:00:00Z");
+  expect(snoozeMinutesLeft(tap, tap)).toBe(60);
+  expect(snoozeMinutesLeft(tap, tap + 45 * 60_000)).toBe(15);
+  expect(snoozeMinutesLeft(tap, tap + 3 * 3600_000)).toBe(1);
+});
+
+test("only a network failure is retried; a refusal from the server is dropped", () => {
+  expect(shouldRetry(new TypeError("Network request failed"))).toBe(true);
+  expect(shouldRetry(new Error("Cet élément n'existe plus."))).toBe(false);
+  expect(shouldRetry(new Error("Request failed (401)."))).toBe(false);
 });
