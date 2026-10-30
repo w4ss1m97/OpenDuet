@@ -11,7 +11,7 @@ export type HostRunner = (
  * text. One fixed string on purpose: the Mac's "always allow" covers an exact command, so the window
  * is fixed here and the scanner filters by its own cursor. Read-only: nothing here writes to Notes.
  */
-const NOTES_JXA = [
+export const NOTES_JXA = [
   'const n = Application("Notes");',
   "const cut = new Date(Date.now() - 30 * 864e5);",
   "const ids = n.notes.id(), names = n.notes.name(), mods = n.notes.modificationDate();",
