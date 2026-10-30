@@ -12,9 +12,22 @@ export type MailMessage = {
   body?: string;
 };
 
-/** The senders Duet reads for items. The caller adds `newer_than:`. */
-export const MAIL_QUERY =
-  "from:(malt.fr OR malt.com OR free-work.com OR collective.work OR linkedin.com OR antai.gouv.fr) OR subject:(facture OR échéance OR prélèvement OR \"à payer\" OR invoice)";
+/**
+ * The searches Duet runs for items, one per sender family, each with its own result cap so a busy
+ * LinkedIn week cannot push a bill out. Plain operators only. The caller adds `newer_than:`.
+ */
+export const MAIL_QUERIES = [
+  "from:malt.fr",
+  "from:malt.com",
+  "from:free-work.com",
+  "from:collective.work",
+  "from:linkedin.com",
+  "from:antai.gouv.fr",
+  "subject:facture",
+  "subject:échéance",
+  "subject:prélèvement",
+  "subject:invoice",
+];
 
 const MONTHS = [
   "janvier",

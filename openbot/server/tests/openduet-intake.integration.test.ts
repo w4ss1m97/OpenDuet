@@ -115,6 +115,7 @@ test("calendar is read for the next 14 days and mail since the last success", as
     timeMin: "2026-11-07T08:00:00.000Z",
     timeMax: "2026-11-21T08:00:00.000Z",
   });
-  const gmail = seen.find((s) => String(s.ref).endsWith("gmail_search_messages"));
-  expect(String(gmail?.query)).toContain("newer_than:1d");
+  const gmail = seen.filter((s) => String(s.ref).endsWith("gmail_search_messages"));
+  expect(gmail.length).toBeGreaterThan(1);
+  for (const g of gmail) expect(String(g.query)).toEndWith(" newer_than:1d");
 });

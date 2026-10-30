@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { classify } from "../src/openduet/items/classify";
 import {
-  MAIL_QUERY,
+  MAIL_QUERIES,
   type MailMessage,
   parseAmount,
   parseMail,
@@ -59,9 +59,9 @@ test("bill with amount and due date is an active bill in maison", () => {
 test("bill with unreadable amount has no amount and stays proposed", () => {
   const item = parseMail(fixture("bill-no-amount"));
   expect(item?.kind).toBe("bill");
-  expect(item?.amount).toBeUndefined();
-  expect(item?.dueAt?.toISOString()).toBe("2026-11-24T23:00:00.000Z");
   if (!item) throw new Error("no item");
+  expect(item.amount).toBeUndefined();
+  expect(item.dueAt?.toISOString()).toBe("2026-11-24T23:00:00.000Z");
   expect(classify(item)).toBe("proposed");
 });
 
@@ -92,8 +92,9 @@ test("a day without a year takes the next occurrence after the message", () => {
   expect(item?.dueAt?.toISOString()).toBe("2027-01-04T23:00:00.000Z");
 });
 
-test("MAIL_QUERY names every sender family", () => {
-  for (const sender of ["malt.fr", "free-work.com", "collective.work", "linkedin.com", "antai.gouv.fr", "facture"]) {
-    expect(MAIL_QUERY).toContain(sender);
+test("MAIL_QUERIES is one simple query per sender family, no OR or grouping", () => {
+  for (const sender of ["from:malt.fr", "from:free-work.com", "from:collective.work", "from:linkedin.com", "from:antai.gouv.fr", "subject:facture"]) {
+    expect(MAIL_QUERIES).toContain(sender);
   }
+  for (const query of MAIL_QUERIES) expect(query).not.toMatch(/\bOR\b|[()]/);
 });

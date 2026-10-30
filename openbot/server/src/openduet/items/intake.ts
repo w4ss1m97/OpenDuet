@@ -2,7 +2,7 @@ import { proactiveInitiator } from "../../proactive/restriction";
 import { CALENDAR_LIST, type CallTool, GMAIL_SEARCH } from "../brief";
 import { type CalendarEvent, parseEvent } from "./calendar-parser";
 import { classify, defaultRemindAt } from "./classify";
-import { MAIL_QUERY, type MailMessage, parseMail } from "./mail-parsers";
+import { MAIL_QUERIES, type MailMessage, parseMail } from "./mail-parsers";
 import { type HostRunner, scanNotes } from "./notes-scanner";
 import { hostProjectReader, type Project, scanProject } from "./project-scanner";
 import type { ItemStore } from "./store";
@@ -70,12 +70,16 @@ export async function runIntake(
       const days = lastSuccessAt
         ? Math.min(MAX_MAIL_DAYS, Math.max(1, Math.ceil((now.getTime() - lastSuccessAt.getTime()) / DAY_MS)))
         : FIRST_MAIL_DAYS;
-      const found = (await call(GMAIL_SEARCH, {
-        query: `(${MAIL_QUERY}) newer_than:${days}d`,
-        maxResults: MAIL_CAP,
-      })) as { messages?: MailMessage[] };
+      const seen = new Map<string, MailMessage>();
+      for (const query of MAIL_QUERIES) {
+        const found = (await call(GMAIL_SEARCH, {
+          query: `${query} newer_than:${days}d`,
+          maxResults: MAIL_CAP,
+        })) as { messages?: MailMessage[] };
+        for (const m of found.messages ?? []) seen.set(m.id, m);
+      }
       return {
-        candidates: (found.messages ?? []).flatMap((m) => parseMail(m) ?? []),
+        candidates: [...seen.values()].flatMap((m) => parseMail(m) ?? []),
         cursor: {},
       };
     },
