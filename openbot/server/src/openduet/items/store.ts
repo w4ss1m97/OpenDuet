@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, gte, inArray, sql, type SQL } from "drizzle-orm";
+import { and, eq, getTableColumns, gte, inArray, sql, type SQL } from "drizzle-orm";
 import type { Database } from "../../db/client";
 import {
   type OpenduetItem,
   openduetIntakeCursors,
   openduetItems,
 } from "../../db/schema/openduet-items";
+import { defaultRemindAt } from "./classify";
+import { parisParts } from "./paris-time";
 import type { ItemCandidate, ItemStatus, Scanner } from "./types";
 
 export class ItemNotFoundError extends Error {
@@ -88,12 +90,82 @@ export function createItemStore(db: Database) {
         .orderBy(sql`${openduetItems.dueAt} ASC NULLS LAST`, openduetItems.createdAt);
     },
 
-    async setStatus(ownerUserId: string, id: string, status: ItemStatus) {
+    /** Keeping a card (proposed → active) gives it the reminders its kind and date call for. */
+    async setStatus(ownerUserId: string, id: string, status: ItemStatus, now = new Date()) {
       const resolved = status === "done" || status === "dismissed";
-      return updateOwned(ownerUserId, id, {
+      const values: Partial<typeof openduetItems.$inferInsert> = {
         status,
         resolvedAt: resolved ? new Date() : null,
-      });
+      };
+      if (status === "active") {
+        const [row] = await db
+          .select()
+          .from(openduetItems)
+          .where(and(eq(openduetItems.id, id), eq(openduetItems.ownerUserId, ownerUserId)));
+        if (!row) throw new ItemNotFoundError(id);
+        if (row.remindAt.length === 0 && row.dueAt) {
+          const local = parisParts(row.dueAt);
+          values.remindAt = defaultRemindAt(
+            {
+              kind: row.kind,
+              title: row.title,
+              dueAt: row.dueAt,
+              allDay: local.hour === 0 && local.minute === 0,
+              sourceApp: row.sourceApp,
+              sourceHash: row.sourceHash,
+              dateExplicit: true,
+            },
+            now,
+          );
+        }
+      }
+      return updateOwned(ownerUserId, id, values);
+    },
+
+    /**
+     * For sources that change in place (a calendar event that moves, a project's status): inserts
+     * the item, or updates its title, date and reminders while it is still proposed or active. A
+     * dismissed or done item is left alone. `inserted` says which happened.
+     */
+    async upsertTracked(
+      ownerUserId: string,
+      c: ItemCandidate,
+      status: ItemStatus,
+      remindAt: Date[],
+    ): Promise<{ item: OpenduetItem | null; inserted: boolean }> {
+      const [row] = await db
+        .insert(openduetItems)
+        .values({
+          id: randomUUID(),
+          ownerUserId,
+          kind: c.kind,
+          title: c.title,
+          why: c.why ?? null,
+          dueAt: c.dueAt ?? null,
+          remindAt,
+          amount: c.amount ?? null,
+          currency: c.currency ?? "EUR",
+          channelId: c.channelId ?? null,
+          sourceApp: c.sourceApp,
+          sourceLink: c.sourceLink ?? null,
+          sourceHash: c.sourceHash,
+          status,
+        })
+        .onConflictDoUpdate({
+          target: [openduetItems.ownerUserId, openduetItems.sourceHash],
+          set: {
+            title: sql`excluded.title`,
+            why: sql`excluded.why`,
+            dueAt: sql`excluded.due_at`,
+            remindAt: sql`CASE WHEN ${openduetItems.status} = 'active' THEN excluded.remind_at ELSE '{}'::timestamptz[] END`,
+            updatedAt: new Date(),
+          },
+          setWhere: inArray(openduetItems.status, ["proposed", "active"]),
+        })
+        .returning({ ...getTableColumns(openduetItems), inserted: sql<boolean>`(xmax = 0)` });
+      if (!row) return { item: null, inserted: false };
+      const { inserted, ...item } = row;
+      return { item, inserted };
     },
 
     async snooze(ownerUserId: string, id: string, until: Date) {

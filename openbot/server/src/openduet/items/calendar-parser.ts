@@ -27,7 +27,7 @@ export function parseEvent(e: CalendarEvent): ItemCandidate | null {
     allDay,
     channelId: "missions",
     sourceApp: "gcal",
-    sourceHash: `gcal:${e.id}:${e.start}`,
+    sourceHash: `gcal:${e.id}`,
     dateExplicit: true,
   };
 }

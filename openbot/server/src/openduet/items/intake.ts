@@ -14,6 +14,8 @@ const MAX_MAIL_DAYS = 30;
 const CALENDAR_DAYS = 14;
 const MAIL_CAP = 50;
 const NO_BRIDGE = "Mac bridge non connecté";
+/** Sources whose items change in place: an event moves, a project moves on. */
+const TRACKED = new Set(["gcal", "project"]);
 const TIMED_OUT = "Source illisible : pas de réponse à temps.";
 
 /** Rejects when `work` has not settled in time, so no source can hold the whole intake. */
@@ -132,13 +134,11 @@ export async function runIntake(
         );
         for (const c of candidates) {
           const status = classify(c);
-          const item = await deps.store.insertIfNew(
-            ownerUserId,
-            c,
-            status,
-            status === "active" ? defaultRemindAt(c, now) : [],
-          );
-          if (item) report[status === "active" ? "added" : "proposed"]++;
+          const remindAt = status === "active" ? defaultRemindAt(c, now) : [];
+          const inserted = TRACKED.has(c.sourceApp)
+            ? (await deps.store.upsertTracked(ownerUserId, c, status, remindAt)).inserted
+            : (await deps.store.insertIfNew(ownerUserId, c, status, remindAt)) !== null;
+          if (inserted) report[status === "active" ? "added" : "proposed"]++;
         }
         await deps.store.advanceCursor(ownerUserId, scanner, cursor, now);
       } catch (error) {

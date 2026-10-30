@@ -33,10 +33,11 @@ test("the location can mark an interview too", () => {
   ).toBe("interview");
 });
 
-test("moved event (new start) gets a new hash", () => {
+test("a moved event keeps its hash, so it updates one item", () => {
   const a = parseEvent({ id: "ev4", summary: "Interview Acme", start: "2026-11-12T10:00:00+01:00" });
   const b = parseEvent({ id: "ev4", summary: "Interview Acme", start: "2026-11-13T10:00:00+01:00" });
-  expect(a?.sourceHash).not.toBe(b?.sourceHash);
+  expect(a?.sourceHash).toBe("gcal:ev4");
+  expect(b?.sourceHash).toBe(a?.sourceHash);
 });
 
 test("an event with no start is ignored", () => {

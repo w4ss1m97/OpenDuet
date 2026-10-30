@@ -114,3 +114,49 @@ test("countSince counts active and proposed items created after a date", async (
   await store.insertIfNew(other, candidate({ kind: "idea" }), "proposed", []);
   expect(await store.countSince(other, since)).toEqual({ added: 1, proposed: 1 });
 });
+
+test("upsertTracked moves an active item and recomputes nothing for a dismissed one", async () => {
+  const hash = `gcal:${randomUUID()}`;
+  const first = await store.upsertTracked(
+    owner,
+    candidate({ kind: "interview", title: "Entretien", sourceHash: hash, dueAt: new Date("2026-12-01T09:00:00Z") }),
+    "active",
+    [new Date("2026-11-30T17:00:00Z")],
+  );
+  expect(first.inserted).toBe(true);
+  const moved = await store.upsertTracked(
+    owner,
+    candidate({ kind: "interview", title: "Entretien (déplacé)", sourceHash: hash, dueAt: new Date("2026-12-03T09:00:00Z") }),
+    "active",
+    [new Date("2026-12-02T17:00:00Z")],
+  );
+  expect(moved.inserted).toBe(false);
+  expect(moved.item?.id).toBe(first.item?.id);
+  expect(moved.item?.title).toBe("Entretien (déplacé)");
+  expect(moved.item?.dueAt?.toISOString()).toBe("2026-12-03T09:00:00.000Z");
+  expect(moved.item?.remindAt.map((d) => d.toISOString())).toEqual(["2026-12-02T17:00:00.000Z"]);
+  if (!first.item) throw new Error("not inserted");
+  await store.setStatus(owner, first.item.id, "dismissed");
+  const ignored = await store.upsertTracked(
+    owner,
+    candidate({ kind: "interview", sourceHash: hash, dueAt: new Date("2026-12-09T09:00:00Z") }),
+    "active",
+    [],
+  );
+  expect(ignored).toEqual({ item: null, inserted: false });
+});
+
+test("keeping a proposed bill gives it its default reminders", async () => {
+  const item = await store.insertIfNew(
+    owner,
+    candidate({ dueAt: new Date("2099-11-19T23:00:00Z"), amount: undefined }),
+    "proposed",
+    [],
+  );
+  if (!item) throw new Error("not inserted");
+  const kept = await store.setStatus(owner, item.id, "active", new Date("2099-11-01T00:00:00Z"));
+  expect(kept.remindAt.map((d) => d.toISOString())).toEqual([
+    "2099-11-17T08:00:00.000Z",
+    "2099-11-20T08:00:00.000Z",
+  ]);
+});

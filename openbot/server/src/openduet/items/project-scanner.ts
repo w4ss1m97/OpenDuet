@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
-import { parisParts } from "./paris-time";
 import type { HostRunner } from "./notes-scanner";
 import type { ItemCandidate } from "./types";
 
@@ -47,18 +46,16 @@ function nextStep(notes: string): string | null {
   return after?.split("\n").find((line) => line.trim())?.trim() ?? null;
 }
 
-/** Where the project stands today: its notes' next step and its last commit. One item per day. */
+/** Where the project stands: its notes' next step and its last commit. One item, updated each run. */
 export async function scanProject(
   p: Project,
   read: ProjectReader,
-  now = new Date(),
+  _now = new Date(),
 ): Promise<ItemCandidate> {
   const [notes, commit] = await Promise.all([
     read.file(`${p.path}/.claude/session-notes.md`),
     read.lastCommit(p.path),
   ]);
-  const day = parisParts(now);
-  const date = `${day.year}-${String(day.month).padStart(2, "0")}-${String(day.day).padStart(2, "0")}`;
   return {
     kind: "project_status",
     title: `${p.name} — ${(notes && nextStep(notes)) ?? "pas de notes"}`,
@@ -66,7 +63,7 @@ export async function scanProject(
     channelId: "projets",
     sourceApp: "project",
     sourceLink: p.path,
-    sourceHash: `project:${p.id}:${date}`,
+    sourceHash: `project:${p.id}`,
     dateExplicit: false,
   };
 }

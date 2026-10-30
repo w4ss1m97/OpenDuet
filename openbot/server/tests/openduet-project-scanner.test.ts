@@ -42,13 +42,14 @@ test('missing notes gives "pas de notes"', async () => {
   expect(item.why).toBe("Aucun commit lu");
 });
 
-test("one hash per project per day", async () => {
-  const a = await scanProject(project, reader(NOTES, null), now);
-  const b = await scanProject(project, reader(NOTES, null), new Date("2026-11-07T21:00:00Z"));
-  const c = await scanProject(project, reader(NOTES, null), new Date("2026-11-08T10:00:00Z"));
-  expect(a.sourceHash).toBe("project:openduet:2026-11-07");
-  expect(b.sourceHash).toBe(a.sourceHash);
-  expect(c.sourceHash).toBe("project:openduet:2026-11-08");
+test("one hash per project, so each day updates the same item", () => {
+  return Promise.all([
+    scanProject(project, reader(NOTES, null), now),
+    scanProject(project, reader(NOTES, null), new Date("2026-11-08T10:00:00Z")),
+  ]).then(([a, b]) => {
+    expect(a.sourceHash).toBe("project:openduet");
+    expect(b.sourceHash).toBe(a.sourceHash);
+  });
 });
 
 test("loadProjects returns [] without file", () => {
