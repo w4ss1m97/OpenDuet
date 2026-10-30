@@ -22,7 +22,8 @@ function expand(path: string): string {
 }
 
 async function spawn(argv: string[]): Promise<{ ok: boolean; output?: string; error?: string }> {
-  const child = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
+  // Killed when a macOS permission prompt or an unmounted volume would keep it waiting.
+  const child = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe", timeout: 60_000, killSignal: "SIGKILL" });
   const [output, error, code] = await Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
@@ -40,7 +41,10 @@ export function localHostRunner(): HostRunner {
         return await spawn(["osascript", "-l", "JavaScript", "-e", NOTES_JXA]);
       const notes = command.match(CAT_NOTES)?.[1];
       if (notes && !notes.includes(".."))
-        return { ok: true, output: await readFile(`${expand(notes)}/.claude/session-notes.md`, "utf8") };
+        return { ok: true, output: await readFile(`${expand(notes)}/.claude/session-notes.md`, {
+          encoding: "utf8",
+          signal: AbortSignal.timeout(10_000),
+        }) };
       const repo = command.match(GIT_LAST)?.[1];
       if (repo && !repo.includes(".."))
         return await spawn(["git", "-C", expand(repo), "log", "-1", "--format=%s"]);

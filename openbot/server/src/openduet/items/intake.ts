@@ -14,6 +14,16 @@ const MAX_MAIL_DAYS = 30;
 const CALENDAR_DAYS = 14;
 const MAIL_CAP = 50;
 const NO_BRIDGE = "Mac bridge non connecté";
+const TIMED_OUT = "Source illisible : pas de réponse à temps.";
+
+/** Rejects when `work` has not settled in time, so no source can hold the whole intake. */
+function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(TIMED_OUT)), ms);
+  });
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer));
+}
 
 export type IntakeReport = {
   at: Date;
@@ -28,6 +38,8 @@ export type IntakeDeps = {
   host: HostRunner | null;
   projects: Project[];
   now: () => Date;
+  /** How long one scanner may take before it counts as unreadable. 90 s by default. */
+  scannerTimeoutMs?: number;
 };
 
 type ScanResult = { candidates: ItemCandidate[]; cursor: unknown };
@@ -114,7 +126,10 @@ export async function runIntake(
     (Object.keys(scanners) as Scanner[]).map(async (scanner) => {
       try {
         const { lastSuccessAt } = await deps.store.getCursor(ownerUserId, scanner);
-        const { candidates, cursor } = await scanners[scanner](lastSuccessAt);
+        const { candidates, cursor } = await withDeadline(
+          scanners[scanner](lastSuccessAt),
+          deps.scannerTimeoutMs ?? 90_000,
+        );
         for (const c of candidates) {
           const status = classify(c);
           const item = await deps.store.insertIfNew(

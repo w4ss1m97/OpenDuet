@@ -98,3 +98,59 @@ test("MAIL_QUERIES is one simple query per sender family, no OR or grouping", ()
   }
   for (const query of MAIL_QUERIES) expect(query).not.toMatch(/\bOR\b|[()]/);
 });
+
+test("an email whose date does not parse still yields an item", () => {
+  const item = parseMail({ ...fixture("bill"), date: "" });
+  expect(item).not.toBeNull();
+  if (!item) throw new Error("no item");
+  expect(item.dueAt?.toISOString()).toBe("2026-11-19T23:00:00.000Z");
+});
+
+test("amounts written ambiguously are not read", () => {
+  expect(parseAmount("Total 1.234,56 €")).toBe(1234.56);
+  expect(parseAmount("45,5 €")).toBeUndefined();
+  expect(parseAmount("Remboursement -45 €")).toBeUndefined();
+  expect(parseAmount("Montant 12345,00 €")).toBe(12345);
+});
+
+test("a bill takes the date after 'avant le', not the first date", () => {
+  const item = parseMail({
+    ...fixture("bill"),
+    date: "2026-10-30T07:00:00.000Z",
+    snippet: "Votre facture du 15/10 : 45 € à payer avant le 20/11.",
+  });
+  if (!item) throw new Error("no item");
+  expect(item.dueAt?.toISOString()).toBe("2026-11-19T23:00:00.000Z");
+  expect(item.dateExplicit).toBe(true);
+});
+
+test("a recent past day without a year stays in this year", () => {
+  const item = parseMail({
+    ...fixture("malt-interview"),
+    date: "2026-10-30T07:00:00.000Z",
+    snippet: "Retour sur votre entretien du 28/10/2026 à 10h.",
+  });
+  if (!item) throw new Error("no item");
+  expect(item.dueAt?.toISOString()).toBe("2026-10-28T09:00:00.000Z");
+  const noYear = parseMail({
+    ...fixture("malt-interview"),
+    date: "2026-10-30T07:00:00.000Z",
+    snippet: "Retour sur votre entretien du 28/10 à 10h.",
+  });
+  expect(noYear?.dueAt?.toISOString()).toBe("2026-10-28T09:00:00.000Z");
+});
+
+test("several dates without a due keyword leave the date unconfirmed", () => {
+  const item = parseMail({
+    ...fixture("malt-interview"),
+    snippet: "Entretien le 12/11/2026 à 14h ou le 13/11/2026 à 10h, à confirmer.",
+  });
+  expect(item?.dateExplicit).toBe(false);
+});
+
+test("impossible days and hours are not dates", () => {
+  for (const snippet of ["Entretien le 12/11/2026 à 25h", "Entretien le 31/02/2026 à 10h"]) {
+    const item = parseMail({ ...fixture("malt-interview"), snippet });
+    expect(item?.dateExplicit).toBe(false);
+  }
+});
