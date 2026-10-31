@@ -6,10 +6,12 @@ import type { Database } from "../db/client";
 import { users } from "../db/schema";
 import { createProactiveStore } from "../proactive/store";
 import { ProactiveNotFoundError } from "../proactive/types";
-import { buildMorningBrief, type CallTool, openduetTools } from "./brief";
+import { type BriefMission, buildMorningBrief, type CallTool, openduetTools } from "./brief";
 import { lastIntakeReport } from "./items/intake";
 import { createItemStore } from "./items/store";
 import { intakeReportTools } from "./items/tool";
+import { createMissionStore, type MissionStore } from "./missions/store";
+import { missionTools } from "./missions/tool";
 import { offerTools } from "./offers";
 import { createPageStore, type PageStore, pageTools } from "./pages";
 import { replyTools } from "./replies";
@@ -22,6 +24,28 @@ import {
   taskTools,
 } from "./tasks";
 import type { Complete } from "./triage";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** The brief's missions: open and active, how long each has been in its stage, and whether a relance waits. */
+export async function loadBriefMissions(
+  store: Pick<MissionStore, "list" | "listRelances">,
+  ownerUserId: string,
+  now: Date,
+): Promise<BriefMission[]> {
+  const [open, drafts] = await Promise.all([
+    store.list(ownerUserId, { open: true, review: ["active"] }),
+    store.listRelances(ownerUserId, { status: "draft" }),
+  ]);
+  const waiting = new Set(drafts.map((r) => r.missionId));
+  return open.map((m) => ({
+    id: m.id,
+    title: m.title,
+    stage: m.stage,
+    daysInStage: Math.max(0, Math.floor((now.getTime() - m.stageEnteredAt.getTime()) / DAY_MS)),
+    relanceReady: waiting.has(m.id),
+  }));
+}
 
 /** How a card the person asked for is told from research's: its run id starts with this. */
 export const ASKED_RUN_PREFIX = "asked:";
@@ -181,6 +205,7 @@ export function createOpenDuetTools(deps: {
   const proactive = createProactiveStore(deps.database);
   const pages = deps.pages ?? createPageStore(deps.database);
   const items = createItemStore(deps.database);
+  const missions = createMissionStore(deps.database);
   return (actorId, botId, initiator) => [
     ...openduetTools({
       actorId,
@@ -199,6 +224,7 @@ export function createOpenDuetTools(deps: {
             callTool: deps.callTool,
             complete: deps.complete,
             model: deps.model,
+            missions: (ownerUserId) => loadBriefMissions(missions, ownerUserId, new Date()),
           },
           input,
         ),
@@ -232,5 +258,6 @@ export function createOpenDuetTools(deps: {
       store: items,
       report: lastIntakeReport,
     }),
+    ...missionTools({ actorId, initiator, store: missions }),
   ];
 }

@@ -66,6 +66,7 @@ export default function Layout() {
       <Stack.Screen name="rules" options={{ title: "Custom rules" }} />
       <Stack.Screen name="plugins" options={{ title: "Plugins" }} />
       <Stack.Screen name="items" options={{ title: "À trier" }} />
+      <Stack.Screen name="missions" options={{ title: "Missions" }} />
     </Stack>
   );
 }

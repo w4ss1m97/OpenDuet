@@ -117,6 +117,8 @@ import {
 import { createPageRoutes, type PageStore } from "./openduet/pages";
 import { createItemRoutes } from "./openduet/items/routes";
 import type { ItemStore } from "./openduet/items/store";
+import { createMissionRoutes } from "./openduet/missions/routes";
+import type { MissionStore } from "./openduet/missions/store";
 import { createSetupRoutes, type SetupSources } from "./openduet/setup";
 import type { TaskReportReader } from "./openduet/task-report";
 import {
@@ -462,6 +464,8 @@ export function createApp(
       pages: PageStore;
       /** Duet's items for the app's reminders and sorting. See openduet/items. */
       items?: ItemStore;
+      /** The missions pipeline for the app. See openduet/missions. */
+      missions?: MissionStore;
       setup?: SetupSources;
       tasks?: TaskStore;
       intake?: TaskIntake;
@@ -1712,6 +1716,11 @@ export function createApp(
     app.route(
       "/api/openduet/items",
       createItemRoutes(coworker.openduet.items, requireUser),
+    );
+  if (coworker?.openduet?.missions)
+    app.route(
+      "/api/openduet/missions",
+      createMissionRoutes(coworker.openduet.missions, requireUser),
     );
   /*
    * Signed in, unlike `/api/capabilities`, which anybody can read. The checklist names what this

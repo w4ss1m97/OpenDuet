@@ -1,12 +1,15 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { type FakeGoogle, startFakeGoogle } from "../../scripts/fake-google/server";
 import { createDatabase } from "../src/db/client";
 import { users } from "../src/db/schema/core";
+import { openduetItems } from "../src/db/schema/openduet-items";
+import { openduetMissionRelances, openduetMissions } from "../src/db/schema/openduet-missions";
 import type { CallTool } from "../src/openduet/brief";
 import { runIntake } from "../src/openduet/items/intake";
 import { createItemStore } from "../src/openduet/items/store";
+import { createMissionStore } from "../src/openduet/missions/store";
 import { callTool as callGoogle } from "../src/plugins/google-workspace-rest";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
 
@@ -58,6 +61,7 @@ async function deliver(from: string, subject: string, body: string) {
     body: JSON.stringify({ from, subject, body }),
   });
   expect(response.status).toBe(201);
+  return (await response.json()) as { id: string; threadId: string };
 }
 
 beforeAll(async () => {
@@ -99,4 +103,146 @@ test("intake against the fake Google: bill active with 2 reminders, Malt followu
 
   const again = await runIntake(deps, owner, "bot");
   expect(again).toMatchObject({ added: 0, proposed: 0 });
+});
+
+// ---- Missions hook -------------------------------------------------------------------------------
+
+const missions = createMissionStore(database);
+const people: string[] = [];
+
+async function person(): Promise<string> {
+  const id = `openduet-intake-missions-${randomUUID()}`;
+  await database.insert(users).values({ id, email: `${id}@example.test` });
+  people.push(id);
+  return id;
+}
+
+afterAll(async () => {
+  await database.delete(users).where(inArray(users.id, people));
+});
+
+/** The fake Gmail has no `from:(a OR b)`: with one address it reads as `from:a`. Every query is kept. */
+function recording(queries: string[]): CallTool {
+  return async (input) => {
+    if (input.ref.endsWith("gmail_search_messages")) {
+      const query = String(input.args.query);
+      queries.push(query);
+      input = { ...input, args: { ...input.args, query: query.replace(/from:\(([^ )]+)\)/, "from:$1") } };
+    }
+    return call(input);
+  };
+}
+
+const tag = () => randomUUID().replace(/-/g, "").slice(0, 8);
+const depsFor = (callTool: CallTool, withMissions = true) => ({
+  store,
+  callTool,
+  host: null,
+  projects: [],
+  now: () => new Date(),
+  ...(withMissions ? { missions } : {}),
+});
+const itemFor = async (owner: string, id: string) =>
+  (await database.select().from(openduetItems).where(and(eq(openduetItems.ownerUserId, owner), eq(openduetItems.sourceHash, `gmail:${id}`))))[0];
+
+test("a reply on a known thread moves the mission applied -> talking and ties the item to it", async () => {
+  const me = await person();
+  const t = tag();
+  const mail = await deliver("Malt <notifications@malt.fr>", `Réponse ${t}`, "Bonjour, merci pour votre candidature.");
+  const { mission } = await missions.createPiste(me, { company: `Acme${t}`, review: "active", stage: "applied", threadId: mail.threadId });
+  await runIntake(depsFor(call), me, "bot");
+  const after = await missions.get(me, mission.id);
+  expect(after.stage).toBe("talking");
+  expect((await itemFor(me, mail.id))?.missionId).toBe(mission.id);
+  expect((await missions.list(me, {})).filter((m) => m.id !== mission.id && m.title.includes(t))).toHaveLength(0);
+});
+
+test("an unmatched Malt mail makes one proposed piste, and a second run makes no other", async () => {
+  const me = await person();
+  const t = tag();
+  const subject = `Nouvelle mission Rust ${t}`;
+  const mail = await deliver("Malt <notifications@malt.fr>", subject, "Un client cherche un dev Rust.");
+  await runIntake(depsFor(call), me, "bot");
+  await runIntake(depsFor(call), me, "bot");
+  const mine = (await missions.list(me, {})).filter((m) => m.title.includes(t));
+  expect(mine).toHaveLength(1);
+  expect(mine[0]).toMatchObject({ review: "proposed", stage: "piste" });
+  expect(mine[0]?.threadIds).toEqual([mail.threadId]);
+  expect((await itemFor(me, mail.id))?.missionId).toBe(mine[0]?.id);
+});
+
+test("a company name alone never refuses a mission: the rejection is only noted", async () => {
+  const me = await person();
+  const t = tag();
+  const company = `Zorblax${t}`;
+  const { mission } = await missions.createPiste(me, { company, review: "active", stage: "applied" });
+  await deliver("Malt <notifications@malt.fr>", `Candidature ${company}`, "Malheureusement, nous ne donnons pas suite.");
+  await runIntake(depsFor(call), me, "bot");
+  const after = await missions.get(me, mission.id);
+  expect(after.stage).toBe("applied");
+  expect(after.lastInboundAt).not.toBeNull();
+  expect((await missions.list(me, {})).filter((m) => m.id !== mission.id && m.title.includes(t))).toHaveLength(0);
+});
+
+test("a rejection on the mission's own thread does refuse it", async () => {
+  const me = await person();
+  const t = tag();
+  const mail = await deliver("Malt <notifications@malt.fr>", `Suite ${t}`, "Malheureusement, nous ne donnons pas suite.");
+  const { mission } = await missions.createPiste(me, { company: `Beta${t}`, review: "active", stage: "applied", threadId: mail.threadId });
+  await runIntake(depsFor(call), me, "bot");
+  expect((await missions.get(me, mission.id)).stage).toBe("refused");
+});
+
+test("items are written as before whether or not missions are wired", async () => {
+  const [plain, wired] = [await person(), await person()];
+  const t = tag();
+  const mail = await deliver("Malt <notifications@malt.fr>", `Item ${t}`, "Rendez-vous le 20/12/2099 à 10h pour un entretien.");
+  await runIntake(depsFor(call, false), plain, "bot");
+  await runIntake(depsFor(call, true), wired, "bot");
+  const [a, b] = [await itemFor(plain, mail.id), await itemFor(wired, mail.id)];
+  const shape = (i: typeof a) => ({ kind: i?.kind, title: i?.title, status: i?.status, channelId: i?.channelId, dueAt: i?.dueAt, remindAt: i?.remindAt });
+  expect(shape(b)).toEqual(shape(a));
+  expect(a?.missionId).toBeNull();
+  expect(b?.missionId).not.toBeNull();
+});
+
+test("the contact query is issued only when a mission has a contact, and a contact's mail moves it", async () => {
+  const none = await person();
+  const noQueries: string[] = [];
+  await runIntake(depsFor(recording(noQueries)), none, "bot");
+  expect(noQueries.filter((q) => q.startsWith("from:("))).toEqual([]);
+
+  const me = await person();
+  const t = tag();
+  const contact = `rh${t}@acme-contact.test`;
+  const { mission } = await missions.createPiste(me, { company: `Gamma${t}`, review: "active", stage: "applied", contactEmail: contact });
+  await deliver(`RH <${contact}>`, `Votre candidature ${t}`, "Pouvez-vous nous donner vos disponibilités pour un entretien ?");
+  const queries: string[] = [];
+  await runIntake(depsFor(recording(queries)), me, "bot");
+  expect(queries.filter((q) => q.startsWith("from:("))).toHaveLength(1);
+  expect(queries.find((q) => q.startsWith("from:("))).toContain(`from:(${contact})`);
+  expect((await missions.get(me, mission.id)).stage).toBe("interview");
+});
+
+test("a silent mission gets one relance after a good run, none when the mail scanner failed", async () => {
+  const me = await person();
+  const { mission } = await missions.createPiste(me, { company: `Delta${tag()}`, review: "active", stage: "applied" });
+  await database
+    .update(openduetMissions)
+    .set({ stageEnteredAt: new Date(Date.now() - 30 * 24 * 3600_000) })
+    .where(eq(openduetMissions.id, mission.id));
+  const relances = async () =>
+    database.select().from(openduetMissionRelances).where(eq(openduetMissionRelances.missionId, mission.id));
+
+  const broken = { ...missions, matchMail: async () => { throw new Error("db down"); } };
+  const failed = await runIntake({ ...depsFor(call), missions: broken as typeof missions }, me, "bot");
+  expect(failed.failed.map((f) => f.scanner)).toContain("mail");
+  expect((await store.getCursor(me, "mail")).lastSuccessAt).toBeNull();
+  expect(await relances()).toHaveLength(0);
+
+  const ok = await runIntake(depsFor(call), me, "bot");
+  expect(ok.failed.map((f) => f.scanner)).not.toContain("mail");
+  expect(await relances()).toHaveLength(1);
+  await runIntake(depsFor(call), me, "bot");
+  expect(await relances()).toHaveLength(1);
 });
