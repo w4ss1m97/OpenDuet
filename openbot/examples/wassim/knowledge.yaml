@@ -1,0 +1,3 @@
+# Sources documentaires connectables. Vide par défaut : on connecte ses comptes
+# depuis la page Connexions, et l'administrateur décide de ce que chaque bot peut lire.
+sources: []

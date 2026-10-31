@@ -1,0 +1,5 @@
+# Le nom affiché partout dans l'app : barre latérale, page de connexion, onboarding.
+# tenant.id est aussi l'id du bot principal dans agents.yaml — les deux se renomment ensemble.
+tenant:
+  id: duet
+  product_name: Duet

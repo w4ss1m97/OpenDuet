@@ -1,0 +1,38 @@
+# Un channel = un workstream nommé, avec sa propre conversation.
+# Chaque tour y porte son nom et son objet, ce qui garde le travail cadré.
+channels:
+  - id: duet
+    name: Duet
+    description: Ton brief, et tout ce qui demande une décision.
+    permitted_agents: [duet]
+    allowed_groups: [all]
+
+  - id: missions
+    name: Missions
+    description: Recherche de mission freelance — pistes, relances, entretiens, TJM.
+    permitted_agents: [duet]
+    allowed_groups: [all]
+
+  - id: projets
+    name: Projets
+    description: Projets perso et side-business — code, MVP, mise en production.
+    permitted_agents: [duet]
+    allowed_groups: [all]
+
+  - id: maison
+    name: Maison
+    description: Chantier de la maison en Tunisie — architecte, plans, décisions.
+    permitted_agents: [duet]
+    allowed_groups: [all]
+
+  - id: veille
+    name: Veille
+    description: Veille technique AWS, DevOps, SRE, sécurité et IA agentique.
+    permitted_agents: [duet]
+    allowed_groups: [all]
+
+  - id: your-agent
+    name: Ton agent
+    description: Le même travail, par un agent apporté via AG-UI.
+    permitted_agents: [your-agent]
+    allowed_groups: [all]
