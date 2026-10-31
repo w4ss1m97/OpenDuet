@@ -7,6 +7,9 @@ import { users } from "../db/schema";
 import { createProactiveStore } from "../proactive/store";
 import { ProactiveNotFoundError } from "../proactive/types";
 import { buildMorningBrief, type CallTool, openduetTools } from "./brief";
+import { lastIntakeReport } from "./items/intake";
+import { createItemStore } from "./items/store";
+import { intakeReportTools } from "./items/tool";
 import { offerTools } from "./offers";
 import { createPageStore, type PageStore, pageTools } from "./pages";
 import { replyTools } from "./replies";
@@ -177,6 +180,7 @@ export function createOpenDuetTools(deps: {
     });
   const proactive = createProactiveStore(deps.database);
   const pages = deps.pages ?? createPageStore(deps.database);
+  const items = createItemStore(deps.database);
   return (actorId, botId, initiator) => [
     ...openduetTools({
       actorId,
@@ -221,6 +225,12 @@ export function createOpenDuetTools(deps: {
       get: (id) => pages.get(actorId, id),
       save: (input) => pages.save(actorId, botId, input),
       initiator,
+    }),
+    ...intakeReportTools({
+      actorId,
+      initiator,
+      store: items,
+      report: lastIntakeReport,
     }),
   ];
 }

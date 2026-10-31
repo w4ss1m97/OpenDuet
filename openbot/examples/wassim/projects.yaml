@@ -1,0 +1,6 @@
+# Projets que Duet suit chaque jour : il lit la « Exact next step » de .claude/session-notes.md
+# et le dernier commit, via le pont Mac (app desktop). Chemins sans espaces ni guillemets.
+projects:
+  - id: openduet
+    name: OpenDuet
+    path: ~/src/OpenDuet

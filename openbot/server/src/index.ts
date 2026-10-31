@@ -11,6 +11,11 @@ import { workOwner } from "@openbot/shared/work-owner";
 import { createTurnRunner } from "@openbot/toolkit/run-turn";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { z } from "zod";
+import { proactiveSettings } from "./db/schema/proactive";
+import { runIntake } from "./openduet/items/intake";
+import { localHostRunner } from "./openduet/items/local-runner";
+import { loadProjects } from "./openduet/items/project-scanner";
+import { createItemStore } from "./openduet/items/store";
 import { createActivityStore } from "./activity/activity";
 import {
   auditRoutineStore,
@@ -2283,6 +2288,59 @@ const proactiveSweep = repeatAfterEach(async () => {
   }
 }, 60_000);
 /*
+ * Duet's items (openduet/items): mail, calendar, Apple Notes and project folders read into one store,
+ * at start and every 30 minutes, for each person who left check-ins on. Notes and projects are read
+ * on this Mac only when OPENDUET_LOCAL_SOURCES=1; otherwise the brief names them as unreadable.
+ */
+const intakeHost =
+  process.env.OPENDUET_LOCAL_SOURCES === "1" && process.platform === "darwin"
+    ? localHostRunner()
+    : null;
+const intakeProjects = (() => {
+  try {
+    return loadProjects(config.tenantPackageDirectory);
+  } catch (error) {
+    console.error(JSON.stringify({ type: "openduet-projects-invalid", error: String(error) }));
+    return [];
+  }
+})();
+const intakeItems = createItemStore(database);
+const intakeEveryone = async () => {
+  const people = await database
+    .selectDistinct({
+      ownerUserId: proactiveSettings.ownerUserId,
+      agentId: proactiveSettings.agentId,
+    })
+    .from(proactiveSettings)
+    .where(eq(proactiveSettings.enabled, true));
+  for (const person of people) {
+    try {
+      await runIntake(
+        {
+          store: intakeItems,
+          callTool: (input) => pluginStore.callTool(input),
+          host: intakeHost,
+          projects: intakeProjects,
+          now: () => new Date(),
+        },
+        person.ownerUserId,
+        person.agentId,
+      );
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          type: "openduet-intake-error",
+          error: error instanceof Error ? error.name : "UnknownError",
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    }
+  }
+};
+const intakeSweep = repeatAfterEach(intakeEveryone, 30 * 60_000);
+// The catch-up on start: once the connectors had a moment to load, then every 30 minutes.
+setTimeout(() => void intakeEveryone().catch(() => {}), 30_000).unref?.();
+/*
  * Follow-ups a Bot scheduled for itself: one headless turn each, through the same turn runner as a
  * routine, into the person's conversation with that Bot. See agents/wake-up.ts.
  */
@@ -2724,6 +2782,7 @@ const app = createApp(
     openduet: {
       pages: openDuetPages,
       tasks: openDuetTasks,
+      items: intakeItems,
       // The checklist onboarding ends on. Facts and verdicts about this configuration, never values.
       setup: createSetupSources({
         productName: tenantPackage.productName,
@@ -2829,6 +2888,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     wakeUpReaper.stop();
     memorySweep.stop();
     proactiveSweep.stop();
+    intakeSweep.stop();
     approvalSweep.stop();
     personResponseSweep.stop();
     groupSweep.stop();

@@ -1,0 +1,147 @@
+# Skills de ce déploiement, et les outils dont chacune a besoin.
+#
+# Une skill est une instruction nommée, invocable par `/`. Elle n'accorde AUCUNE capacité :
+# elle ne peut que demander à un bot d'utiliser ce qu'il détient déjà, et chaque appel reste
+# décidé, vérifié par la policy et enregistré.
+#
+# `tools:` est la vraie raison d'être de ce fichier. Un bot qui détient plus d'une poignée
+# d'outils ne se voit proposer, par tour, que les outils des skills qui correspondent au
+# message — parce qu'un modèle choisit le bon outil de façon fiable parmi une dizaine, et peu
+# fiable parmi une trentaine. C'est le levier de fiabilité n°1 de tout le système.
+#
+# Nommer un outil ici n'accorde rien. L'offre est toujours intersectée avec les grants du bot :
+# une skill qui nomme un outil que le bot ne détient pas ne charge rien. Ce fichier peut donc
+# nommer des outils de connecteurs non encore ajoutés — et il le doit, c'est ce qui les rend
+# opérants dès qu'on les connecte.
+skills:
+  - slug: brief-du-matin
+    title: Brief du matin
+    summary: Ce qui demande une décision aujourd'hui, ce qui peut attendre, et l'agenda du jour.
+    instructions: >-
+      Appelle morning_brief. L'app affiche son résultat sous forme de carte, donc ne relistes
+      pas les éléments. Dis ensuite, en deux phrases courtes au maximum, la seule chose la plus
+      importante, et propose une action concrète. Si le brief mentionne une source qu'il n'a pas
+      pu consulter, dis laquelle manque et qu'elle se connecte depuis la page Connexions ; ne
+      décris jamais une source non consultée comme étant calme. Appelle aussi intake_report et dis
+      en une phrase ce qui a été ajouté depuis la dernière fois, combien de cartes attendent d'être
+      triées et ce qui tombe dans les 48 h ; nomme chaque source de failedSources et dis qu'elle se
+      reconnecte depuis Connexions.
+    tools:
+      - google-workspace/gmail_search_messages
+      - google-workspace/calendar_list_events
+      - openduet/intake_report
+
+  - slug: premier-jour
+    title: Faire connaissance
+    summary: Comprendre ce que fait Wassim depuis ses mails récents et son agenda de la semaine.
+    instructions: >-
+      Lis les mails récents et l'agenda de la semaine, puis réponds en trois bulles courtes :
+      ce que tu comprends de son activité, trois façons concrètes dont tu peux l'aider, et une
+      invitation à te corriger. Si Gmail et l'agenda ne sont pas connectés, ne promets aucun
+      mail : dis ce que tu peux faire dès maintenant et montre la carte de connexion.
+    tools:
+      - google-workspace/gmail_search_messages
+      - google-workspace/gmail_read_message
+      - google-workspace/calendar_list_events
+
+  - slug: repondre-a-un-email
+    title: Répondre à un email
+    summary: Lire un message et rédiger une réponse qui ne part qu'après approbation.
+    instructions: >-
+      Trouve le message visé, et si plusieurs peuvent correspondre, prends celui qui colle à ce
+      qui a été dit plutôt que le plus récent. Lis-le en entier avec gmail_read_message avant de
+      rédiger. Écris une réponse courte, dans la voix de Wassim, qui répond à ce qui est demandé
+      et rien de plus. Puis appelle gmail_send_reply immédiatement, à l'expéditeur, dans le même
+      fil : ne demande pas de valider le brouillon d'abord. L'envoi se met lui-même en pause et
+      montre le message exact avec Refuser, Autoriser une fois et Toujours autoriser — c'est là
+      qu'il décide, et demander avant reviendrait à demander deux fois. Ne dis jamais qu'une
+      réponse est partie tant que l'outil ne l'a pas confirmé.
+    tools:
+      - google-workspace/gmail_read_message
+      - google-workspace/gmail_send_reply
+
+  - slug: relance-mission
+    title: Relancer une piste de mission
+    summary: Retrouver l'échange avec un recruteur ou une ESN et rédiger la relance.
+    instructions: >-
+      Cherche dans les mails le dernier échange avec la personne ou la société nommée. Lis le fil
+      en entier avant d'écrire. Établis trois choses : la date du dernier échange, ce qui avait
+      été convenu, et qui doit bouger maintenant. Rédige une relance courte, polie et directe,
+      qui rappelle le contexte en une phrase et demande une réponse ferme sur un point précis —
+      une date, un retour client, un accord sur le TJM. Pas de formule d'excuse, pas de relance
+      qui s'excuse de relancer. Appelle ensuite gmail_send_reply directement : la porte
+      d'approbation montrera le message exact. Si le dernier échange date de moins de cinq jours,
+      dis-le avant d'écrire : relancer trop tôt dessert la position.
+    tools:
+      - google-workspace/gmail_search_messages
+      - google-workspace/gmail_read_message
+      - google-workspace/gmail_send_reply
+
+  - slug: prep-entretien
+    title: Préparer un entretien client
+    summary: Rassembler le contexte d'une mission et produire une page de préparation.
+    instructions: >-
+      Rassemble ce qui est connu de la mission : le fil mail avec l'ESN ou le recruteur, la fiche
+      de poste si elle est en pièce jointe, et les créneaux à l'agenda. Recherche ensuite sur le
+      web public le contexte technique de l'entreprise si c'est utile. Produis une page avec
+      make_page qui contient : le contexte de la mission en cinq lignes, la stack annoncée, les
+      points où le profil de Wassim correspond directement, et surtout les écarts — ce qui est
+      demandé et qu'il n'a pas pratiqué. Sois franc sur ces écarts et propose pour chacun une
+      façon honnête de le présenter, jamais une façon de le masquer. Termine par cinq questions
+      qu'il peut poser au client. Mets les URL sources à côté des affirmations qu'elles appuient.
+    tools:
+      - google-workspace/gmail_search_messages
+      - google-workspace/gmail_read_message
+      - google-workspace/calendar_list_events
+      - "@research/search"
+      - "@research/fetch"
+
+  - slug: veille-technique
+    title: Veille AWS, DevOps et sécurité
+    summary: Chercher ce qui a bougé récemment sur une techno et en faire un brief sourcé.
+    instructions: >-
+      Cherche sur le web public ce qui a changé récemment sur le sujet demandé — AWS, Kubernetes,
+      Terraform, CI/CD, outillage sécurité, IA agentique. Privilégie les sources primaires :
+      blogs d'ingénierie, annonces officielles, documentation, articles de recherche. Ignore les
+      agrégateurs et le contenu SEO. Produis un brief avec make_page : par élément, ce qui a
+      changé, pourquoi c'est important pour un consultant DevOps en mission, et l'URL source. Au
+      plus six éléments. Si rien de significatif n'a bougé sur la période, dis-le plutôt que de
+      remplir.
+    tools:
+      - "@research/search"
+      - "@research/fetch"
+
+  - slug: recherche-web
+    title: Rechercher sur le web public
+    summary: Chercher des sources publiques actuelles et écrire un brief sourcé.
+    instructions: >-
+      Utilise les outils de recherche publique que tu détiens pour trouver les sources
+      pertinentes et lire les pages retenues avant de répondre. Garde les objectifs de recherche
+      précis et les requêtes courtes. N'envoie que l'objectif, les requêtes et les URL
+      nécessaires : jamais des conversations entières ni des documents privés. Cite les URL
+      sources et signale ce qui manque ou ce qui a échoué. Un grant manquant relève de
+      l'administrateur ; ne contourne jamais un refus.
+    tools:
+      - "@research/search"
+      - "@research/fetch"
+
+  - slug: skill-creator
+    title: Écrire une skill
+    summary: M'interroger sur une skill que je veux, l'écrire, et l'enregistrer comme commande `/`.
+    instructions: >-
+      Interroge Wassim sur ce que la skill doit faire, dans quelles situations elle doit
+      s'appliquer, et quels outils elle a besoin d'utiliser. Une question à la fois. Quand tu as
+      de quoi écrire, rédige l'instruction et la liste d'outils, montre-les, et enregistre la
+      skill une fois qu'il valide. Rappelle-toi qu'une skill n'accorde aucune capacité : si elle
+      nomme un outil que le bot ne détient pas, elle ne chargera rien, et c'est à
+      l'administrateur d'accorder le grant.
+    tools: []
+
+  - slug: bot-creator
+    title: Créer un collègue
+    summary: Définir ce que devrait être un nouveau bot, puis le proposer à la création.
+    instructions: >-
+      Détermine avec Wassim ce que ce nouveau bot doit faire, ce qui le distingue des bots
+      existants, et quels outils il lui faut. S'il existe déjà un bot qui couvre ce besoin,
+      dis-le plutôt que d'en créer un deuxième. Puis propose la création.
+    tools: []
