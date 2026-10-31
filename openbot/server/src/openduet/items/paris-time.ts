@@ -58,3 +58,20 @@ export function parisDayAt(date: Date, days: number, hour: number, minute = 0): 
   const p = parisParts(date);
   return parisDate(p.year, p.month, p.day + days, hour, minute);
 }
+
+/**
+ * Whole Paris business days (Monday to Friday) between two instants: how many weekdays after the
+ * anchor's Paris day have started by `now`. Counted on calendar dates, so a DST change cannot shift
+ * the result. Jours fériés are not skipped. Zero when `now` is not after the anchor.
+ */
+export function parisBusinessDaysSince(anchor: Date, now: Date): number {
+  const a = parisParts(anchor);
+  const n = parisParts(now);
+  const end = Date.UTC(n.year, n.month - 1, n.day);
+  let count = 0;
+  for (let day = Date.UTC(a.year, a.month - 1, a.day) + 86_400_000; day <= end; day += 86_400_000) {
+    const weekday = new Date(day).getUTCDay();
+    if (weekday !== 0 && weekday !== 6) count += 1;
+  }
+  return count;
+}

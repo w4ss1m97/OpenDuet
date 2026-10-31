@@ -254,6 +254,57 @@ describe("morning brief", () => {
   });
 });
 
+describe("morning brief missions section", () => {
+  const complete = async () => '{"verdict":"can_wait","reason":"Routine."}';
+  const row = { id: "ms1", title: "Dev Rust chez Acme", stage: "applied", daysInStage: 6, relanceReady: true } as const;
+
+  test("is empty when no loader is wired", async () => {
+    const { callTool } = connector();
+    const brief = await buildMorningBrief({ callTool, model: "m", now: () => NOW, complete }, input);
+    expect(brief.missions).toEqual([]);
+    expect(brief.couldNotCheck.map((c) => c.source)).not.toContain("Missions");
+  });
+
+  test("lists what the loader returns for this person", async () => {
+    const { callTool } = connector();
+    const asked: string[] = [];
+    const brief = await buildMorningBrief(
+      {
+        callTool,
+        model: "m",
+        now: () => NOW,
+        complete,
+        missions: async (owner) => {
+          asked.push(owner);
+          return [row];
+        },
+      },
+      input,
+    );
+    expect(brief.missions).toEqual([row]);
+    expect(asked).toEqual(["dev-local-user"]);
+  });
+
+  test("a loader that fails is named under could not check and the rest of the brief stays", async () => {
+    const { callTool } = connector();
+    const brief = await buildMorningBrief(
+      {
+        callTool,
+        model: "m",
+        now: () => NOW,
+        complete,
+        missions: async () => {
+          throw new Error("database is down");
+        },
+      },
+      input,
+    );
+    expect(brief.missions).toEqual([]);
+    expect(brief.couldNotCheck).toEqual([{ source: "Missions", why: "database is down" }]);
+    expect(brief.checked.mail).toBe(3);
+  });
+});
+
 describe("the morning_brief tool", () => {
   test("returns the brief as JSON and refuses unknown arguments", async () => {
     let built = 0;
@@ -272,6 +323,7 @@ describe("the morning_brief tool", () => {
           canWait: [],
           calendar: [],
           couldNotCheck: [],
+          missions: [],
           checked: { mail: 0, byRules: 0, byModel: 0 },
         };
       },

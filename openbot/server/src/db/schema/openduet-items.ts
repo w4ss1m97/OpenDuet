@@ -13,6 +13,7 @@ import type { ItemKind, ItemStatus, Scanner } from "../../openduet/items/types";
 import { users } from "./core";
 import { jsonb } from "./json";
 import { openduetTasks } from "./openduet";
+import { openduetMissions } from "./openduet-missions";
 
 /**
  * Something Duet keeps for its person, not work it does itself: an interview, a bill, a fine, an idea
@@ -22,6 +23,9 @@ import { openduetTasks } from "./openduet";
  *
  * `source_hash` is the dedup key: an item is never written twice for the same source, whatever its
  * status, so a card the person dismissed does not come back on the next intake.
+ *
+ * `mission_id` ties an interview or follow-up to the mission it is about (openduet-missions.ts); deleting
+ * the mission leaves the item.
  *
  * `channel_id` is the tenant channel slug (missions, projets, maison, duet), kept as text rather than
  * a foreign key so an item survives a channel being renamed or removed.
@@ -51,6 +55,9 @@ export const openduetItems = pgTable(
     taskId: text("task_id").references(() => openduetTasks.id, {
       onDelete: "set null",
     }),
+    missionId: text("mission_id").references(() => openduetMissions.id, {
+      onDelete: "set null",
+    }),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -68,6 +75,11 @@ export const openduetItems = pgTable(
       table.ownerUserId,
       table.status,
       table.dueAt,
+    ),
+    index("openduet_items_mission_idx").on(table.missionId),
+    check(
+      "openduet_items_mission_kind_check",
+      sql`${table.missionId} IS NULL OR ${table.kind} IN ('interview', 'followup')`,
     ),
     check(
       "openduet_items_kind_check",

@@ -16,6 +16,7 @@ import { runIntake } from "./openduet/items/intake";
 import { localHostRunner } from "./openduet/items/local-runner";
 import { loadProjects } from "./openduet/items/project-scanner";
 import { createItemStore } from "./openduet/items/store";
+import { createMissionStore } from "./openduet/missions/store";
 import { createActivityStore } from "./activity/activity";
 import {
   auditRoutineStore,
@@ -2305,6 +2306,7 @@ const intakeProjects = (() => {
   }
 })();
 const intakeItems = createItemStore(database);
+const intakeMissions = createMissionStore(database);
 const intakeEveryone = async () => {
   const people = await database
     .selectDistinct({
@@ -2318,6 +2320,7 @@ const intakeEveryone = async () => {
       await runIntake(
         {
           store: intakeItems,
+          missions: intakeMissions,
           callTool: (input) => pluginStore.callTool(input),
           host: intakeHost,
           projects: intakeProjects,
@@ -2783,6 +2786,7 @@ const app = createApp(
       pages: openDuetPages,
       tasks: openDuetTasks,
       items: intakeItems,
+      missions: intakeMissions,
       // The checklist onboarding ends on. Facts and verdicts about this configuration, never values.
       setup: createSetupSources({
         productName: tenantPackage.productName,

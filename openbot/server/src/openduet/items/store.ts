@@ -73,6 +73,20 @@ export function createItemStore(db: Database) {
       return row ?? null;
     },
 
+    /** Ties the item read from this source to its mission, once: an item already tied keeps its mission. */
+    async linkMission(ownerUserId: string, sourceHash: string, missionId: string): Promise<void> {
+      await db
+        .update(openduetItems)
+        .set({ missionId, updatedAt: new Date() })
+        .where(
+          and(
+            eq(openduetItems.ownerUserId, ownerUserId),
+            eq(openduetItems.sourceHash, sourceHash),
+            sql`${openduetItems.missionId} IS NULL`,
+          ),
+        );
+    },
+
     async list(ownerUserId: string, q: ItemQuery = {}): Promise<OpenduetItem[]> {
       const where: SQL[] = [eq(openduetItems.ownerUserId, ownerUserId)];
       if (q.status?.length) where.push(inArray(openduetItems.status, q.status));

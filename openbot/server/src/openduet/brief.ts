@@ -45,6 +45,15 @@ export type BriefEvent = {
   location?: string;
 };
 
+/** One open mission for the brief: where it stands, for how long, and whether a relance draft waits. */
+export type BriefMission = {
+  id: string;
+  title: string;
+  stage: string;
+  daysInStage: number;
+  relanceReady: boolean;
+};
+
 export type MorningBrief = {
   /** ISO 8601, when the brief was made. */
   at: string;
@@ -53,6 +62,8 @@ export type MorningBrief = {
   needsYou: BriefMail[];
   canWait: BriefMail[];
   calendar: BriefEvent[];
+  /** Open active missions; empty when none, or when they could not be read (see couldNotCheck). */
+  missions: BriefMission[];
   /** Each source that could not be read, and why, in words the person can act on. */
   couldNotCheck: { source: string; why: string }[];
   checked: { mail: number; byRules: number; byModel: number };
@@ -176,6 +187,8 @@ export async function buildMorningBrief(
     complete: Complete;
     model: string;
     now?: () => Date;
+    /** Reads this person's missions. Absent, the brief has no missions section. */
+    missions?: (ownerUserId: string) => Promise<BriefMission[]>;
   },
   input: {
     actorId: string;
@@ -201,6 +214,7 @@ export async function buildMorningBrief(
     needsYou: [],
     canWait: [],
     calendar: [],
+    missions: [],
     couldNotCheck,
     checked: { mail: 0, byRules: 0, byModel: 0 },
   };
@@ -307,6 +321,13 @@ export async function buildMorningBrief(
     else brief.calendar = calendarResult.parse(JSON.parse(result.text)).events;
   } catch (error) {
     couldNotCheck.push({ source: "Google Calendar", why: why(error) });
+  }
+  if (deps.missions) {
+    try {
+      brief.missions = await deps.missions(input.actorId);
+    } catch (error) {
+      couldNotCheck.push({ source: "Missions", why: why(error) });
+    }
   }
   return brief;
 }
