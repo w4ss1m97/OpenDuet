@@ -10,3 +10,7 @@ node_modules/
 # Added by CopilotKit CLI: browser snapshots a coding agent writes.
 .playwright-mcp/
 .superpowers/
+
+# Claude Code local files
+.claude/worktrees/
+.claude/session-notes.md
