@@ -153,6 +153,8 @@ const runsSchema = z.object({
       conclusion: z.string().nullable(),
       html_url: githubUrl,
       updated_at: z.string(),
+      run_started_at: z.string().nullish(),
+      run_attempt: z.number().nullish(),
     }),
   ),
 });
@@ -180,13 +182,14 @@ function parseMerged(out: string | null): string[] | null {
   return parsed.success ? [...new Set(parsed.data.map((p) => p.headRefName))].sort() : null;
 }
 
-function parseRuns(out: string | null): CockpitRun[] | null {
+/** The `actions/runs` answer as runs; `started` and `attempt` are what the CI page adds. */
+export function parseRuns(out: string | null): CockpitRun[] | null {
   const parsed = runsSchema.safeParse(parseJson(out));
   if (!parsed.success) return null;
   return parsed.data.workflow_runs.map((r) => ({
     id: r.id, wid: r.workflow_id ?? null, dynamic: r.event === "dynamic", workflow: r.name,
     branch: r.head_branch ?? "", status: r.status, conclusion: r.conclusion, url: r.html_url,
-    updated: r.updated_at, t: Date.parse(r.updated_at) / 1000,
+    updated: r.updated_at, t: Date.parse(r.updated_at) / 1000, started: r.run_started_at ?? null, attempt: r.run_attempt ?? 1,
   }));
 }
 

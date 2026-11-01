@@ -71,6 +71,9 @@ export type CockpitRun = {
   url: string;
   updated: string;
   t: number;
+  /** When the run started (ISO), null when GitHub gives none. */
+  started: string | null;
+  attempt: number;
 };
 
 /** A running Claude Code session. `updatedAt` is milliseconds. */
