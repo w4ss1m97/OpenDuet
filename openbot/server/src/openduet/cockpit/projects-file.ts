@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, sep } from "node:path";
 import type { CockpitProject } from "./types";
@@ -10,20 +10,20 @@ const MAX_NOTES_BYTES = 64 * 1024;
 export const PROJECTS_FILE = join(homedir(), ".claude", "cockpit-projects.txt");
 
 /** The real path of `candidate` when it exists and lies inside the real path of `root`; null otherwise. */
-export function safeSubpath(root: string, candidate: string): string | null {
+export async function safeSubpath(root: string, candidate: string): Promise<string | null> {
   if (candidate.includes("\0") || root.includes("\0")) return null;
   try {
-    const base = realpathSync(root);
-    const real = realpathSync(candidate.startsWith("/") ? candidate : join(root, candidate));
+    const base = await realpath(root);
+    const real = await realpath(candidate.startsWith("/") ? candidate : join(root, candidate));
     return real === base || real.startsWith(base + sep) ? real : null;
   } catch {
     return null;
   }
 }
 
-const isDirectory = (path: string) => {
+const isDirectory = async (path: string) => {
   try {
-    return statSync(path).isDirectory();
+    return (await stat(path)).isDirectory();
   } catch {
     return false;
   }
@@ -33,13 +33,13 @@ const isDirectory = (path: string) => {
  * The projects in the list file that are safe to read: a valid name, an absolute path (`~` expanded)
  * whose real path is a git checkout inside the real home. Bad lines and repeats are skipped.
  */
-export function loadCockpitProjects(
+export async function loadCockpitProjects(
   options: { file?: string; home?: string } = {},
-): CockpitProject[] {
+): Promise<CockpitProject[]> {
   const home = options.home ?? homedir();
   let text: string;
   try {
-    text = readFileSync(options.file ?? PROJECTS_FILE, "utf8");
+    text = await readFile(options.file ?? PROJECTS_FILE, "utf8");
   } catch {
     return [];
   }
@@ -56,8 +56,8 @@ export function loadCockpitProjects(
     if (!NAME.test(name) || path.includes("\0")) continue;
     if (path === "~" || path.startsWith("~/")) path = join(home, path.slice(1));
     if (!path.startsWith("/")) continue;
-    const real = safeSubpath(home, path);
-    if (!real || !isDirectory(join(real, ".git"))) continue;
+    const real = await safeSubpath(home, path);
+    if (!real || !(await isDirectory(join(real, ".git")))) continue;
     if (names.has(name) || paths.has(real)) continue;
     names.add(name);
     paths.add(real);
@@ -67,13 +67,13 @@ export function loadCockpitProjects(
 }
 
 /** The project's session notes: a regular file (not a link) inside the project, at most 64 KiB. */
-export function readNotesFile(projectPath: string): { text: string; mtime: number } | null {
+export async function readNotesFile(projectPath: string): Promise<{ text: string; mtime: number } | null> {
   try {
     const file = join(projectPath, ".claude", "session-notes.md");
-    const info = lstatSync(file);
+    const info = await lstat(file);
     if (!info.isFile() || info.size > MAX_NOTES_BYTES) return null;
-    if (!safeSubpath(projectPath, file)) return null;
-    return { text: readFileSync(file, "utf8"), mtime: info.mtimeMs / 1000 };
+    if (!(await safeSubpath(projectPath, file))) return null;
+    return { text: await readFile(file, "utf8"), mtime: info.mtimeMs / 1000 };
   } catch {
     return null;
   }
@@ -83,9 +83,9 @@ export function readNotesFile(projectPath: string): { text: string; mtime: numbe
 export const SESSIONS_DIR = join(homedir(), ".claude", "sessions");
 
 /** `*.json` files in a directory, never the `*.key` ones next to them. */
-export function sessionFiles(dir: string): string[] {
+export async function sessionFiles(dir: string): Promise<string[]> {
   try {
-    return readdirSync(dir)
+    return (await readdir(dir))
       .filter((file) => file.endsWith(".json"))
       .map((file) => join(dir, file));
   } catch {

@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync } from "node:fs";
+import { lstat, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, sep } from "node:path";
 import { z } from "zod";
@@ -108,11 +108,11 @@ const sessionSchema = z.object({
 });
 
 /** Live Claude sessions from `*.json` in the sessions folder; only the six fields below are kept. */
-export function loadSessions(dir: string = SESSIONS_DIR, alive: (pid: number) => boolean = pidAlive): CockpitSession[] {
+export async function loadSessions(dir: string = SESSIONS_DIR, alive: (pid: number) => boolean = pidAlive): Promise<CockpitSession[]> {
   const sessions: CockpitSession[] = [];
-  for (const file of sessionFiles(dir)) {
+  for (const file of await sessionFiles(dir)) {
     try {
-      const parsed = sessionSchema.safeParse(JSON.parse(readFileSync(file, "utf8")));
+      const parsed = sessionSchema.safeParse(JSON.parse(await readFile(file, "utf8")));
       if (!parsed.success || !alive(parsed.data.pid)) continue;
       const { pid, sessionId, cwd, name, status, updatedAt } = parsed.data;
       sessions.push({ pid, sessionId, cwd, name, status, updatedAt });
@@ -196,11 +196,11 @@ export type CollectDeps = {
   gh(args: string[]): Promise<string | null>;
   cache: TtlCache;
   home: string;
-  readNotes(path: string): { text: string; mtime: number } | null;
+  readNotes(path: string): Promise<{ text: string; mtime: number } | null>;
   /** Seconds since the epoch of a file's last change; null when it is gone. */
-  mtimeOf(path: string): number | null;
+  mtimeOf(path: string): Promise<number | null>;
   /** The real path when it lies inside the home folder; null otherwise. */
-  realUnderHome(path: string): string | null;
+  realUnderHome(path: string): Promise<string | null>;
   sessions: CockpitSession[];
 };
 
@@ -220,7 +220,7 @@ async function defaultBranch(path: string, deps: CollectDeps): Promise<string> {
 
 async function dirtyInfo(path: string, deps: CollectDeps) {
   const entries = parseDirty((await deps.git(path, ["status", "--porcelain=v1", "-z", "--untracked-files=normal"])) ?? "");
-  const times = entries.slice(0, 500).map((e) => deps.mtimeOf(join(path, e))).filter((t): t is number => t !== null);
+  const times = (await Promise.all(entries.slice(0, 500).map((e) => deps.mtimeOf(join(path, e))))).filter((t): t is number => t !== null);
   return { count: entries.length, oldest: times.length ? Math.min(...times) : null, files: entries.slice(0, 8) };
 }
 
@@ -229,7 +229,7 @@ async function worktreesInfo(path: string, base: string, merged: Set<string>, de
   const ref = (await deps.git(path, ["rev-parse", "--verify", "-q", `refs/remotes/origin/${base}`])) ? `origin/${base}` : base;
   const found: CockpitWorktree[] = [];
   for (const { path: wt, branch } of listed) {
-    const real = deps.realUnderHome(wt);
+    const real = await deps.realUnderHome(wt);
     if (!real) continue;
     const [ahead, dirty] = await Promise.all([
       deps.git(path, ["rev-list", "--count", `${ref}..${branch}`]),
@@ -283,7 +283,7 @@ export async function collectProject(project: CockpitProject, deps: CollectDeps)
       ])
     : [null, null];
 
-  const rawNotes = deps.readNotes(path);
+  const rawNotes = await deps.readNotes(path);
   return {
     ...out,
     repo, repoUrl: repo ? `https://github.com/${repo}` : null, default: base,
@@ -302,8 +302,8 @@ export type CockpitService = {
 
 /** The service the routes call; every default is the real machine, each can be replaced in a test. */
 export function createCockpitService(options: {
-  listProjects?: () => CockpitProject[];
-  loadSessionList?: () => CockpitSession[];
+  listProjects?: () => CockpitProject[] | Promise<CockpitProject[]>;
+  loadSessionList?: () => CockpitSession[] | Promise<CockpitSession[]>;
   home?: string;
   now?: () => number;
   thresholds?: Partial<CockpitThresholds>;
@@ -321,9 +321,9 @@ export function createCockpitService(options: {
     cache,
     home,
     readNotes: readNotesFile,
-    mtimeOf: (p) => {
+    mtimeOf: async (p) => {
       try {
-        return lstatSync(p).mtimeMs / 1000;
+        return (await lstat(p)).mtimeMs / 1000;
       } catch {
         return null;
       }
@@ -332,7 +332,7 @@ export function createCockpitService(options: {
     ...options.deps,
   };
   const collect = async (projects: CockpitProject[]) => {
-    const sessions = sessionsNow();
+    const sessions = await sessionsNow();
     return Promise.all(
       projects.map(async (project) =>
         (await cache.cached(`project:${project.name}:${project.path}`, GIT_TTL_MS, () => collectProject(project, { ...baseDeps, sessions }))) ??
@@ -342,13 +342,13 @@ export function createCockpitService(options: {
   };
   return {
     async snapshot() {
-      const projects = list();
+      const projects = await list();
       const data = await collect(projects);
       const at = now();
       return { projects: data, attention: buildAttention(data, thresholds, at / 1000), names: projects.map((p) => p.name), generatedAt: at };
     },
     async project(name) {
-      const found = list().find((p) => p.name === name);
+      const found = (await list()).find((p) => p.name === name);
       if (!found) return null;
       const [data] = await collect([found]);
       return { project: data!, attention: buildAttention([data!], thresholds, now() / 1000) };

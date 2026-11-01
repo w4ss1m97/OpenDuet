@@ -358,7 +358,7 @@ export type ExploreService = { explore(name: string): Promise<ExploreResult | nu
 /** Looks a project up in the cockpit list and explores it, keeping the answer for ten minutes. */
 export function createExploreService(
   options: {
-    listProjects?: () => CockpitProject[];
+    listProjects?: () => CockpitProject[] | Promise<CockpitProject[]>;
     home?: string;
     now?: () => number;
     cache?: TtlCache;
@@ -371,7 +371,7 @@ export function createExploreService(
   const list = options.listProjects ?? (() => loadCockpitProjects({ file: PROJECTS_FILE, home }));
   return {
     async explore(name) {
-      const project = list().find((p) => p.name === name);
+      const project = (await list()).find((p) => p.name === name);
       if (!project) return null;
       const core = await cache.cached(`explore:${project.name}:${project.path}`, EXPLORE_TTL_MS, () =>
         exploreProject(project.path, { run: options.run, now }),

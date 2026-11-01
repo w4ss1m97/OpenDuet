@@ -5,7 +5,7 @@
  * and at most six per hour: each call costs tokens.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmod, mkdir, readFile, readdir, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
@@ -165,10 +165,10 @@ export function createExplainService(options: ExplainOptions = {}): ExplainServi
   const inflight = new Map<string, Promise<GenerateOutcome>>();
   const starts: number[] = [];
 
-  const folder = (root: string) => {
+  const folder = async (root: string) => {
     let real = root;
     try {
-      real = realpathSync(root);
+      real = await realpath(root);
     } catch {
       // keep the given path
     }
@@ -176,10 +176,10 @@ export function createExplainService(options: ExplainOptions = {}): ExplainServi
   };
 
   /** Valid cache files of a project, newest first. A file whose content disagrees with its name is ignored. */
-  const readAll = (dir: string): Array<CachedExplanation & { name: string; promptVersion: number }> => {
+  const readAll = async (dir: string): Promise<Array<CachedExplanation & { name: string; promptVersion: number }>> => {
     let names: string[];
     try {
-      names = readdirSync(dir);
+      names = await readdir(dir);
     } catch {
       return [];
     }
@@ -188,7 +188,7 @@ export function createExplainService(options: ExplainOptions = {}): ExplainServi
       const match = FILE_NAME.exec(name);
       if (!match) continue;
       try {
-        const parsed = fileSchema.safeParse(JSON.parse(readFileSync(join(dir, name), "utf8")));
+        const parsed = fileSchema.safeParse(JSON.parse(await readFile(join(dir, name), "utf8")));
         if (!parsed.success || parsed.data.head !== match[1] || parsed.data.promptVersion !== Number(match[2])) continue;
         found.push({ name, head: parsed.data.head, promptVersion: parsed.data.promptVersion, generatedAt: parsed.data.generatedAt, explanation: parsed.data.explanation });
       } catch {
@@ -201,18 +201,18 @@ export function createExplainService(options: ExplainOptions = {}): ExplainServi
   const publish = (c: CachedExplanation | undefined): CachedExplanation | null =>
     c ? { head: c.head, generatedAt: c.generatedAt, explanation: c.explanation } : null;
 
-  const write = (dir: string, head: string, explanation: Explanation, generatedAt: number) => {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    chmodSync(base, 0o700);
-    chmodSync(dir, 0o700);
+  const write = async (dir: string, head: string, explanation: Explanation, generatedAt: number) => {
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    await chmod(base, 0o700);
+    await chmod(dir, 0o700);
     const name = `${head}-v${version}.json`;
     const temp = join(dir, `.${name}.${randomBytes(6).toString("hex")}.tmp`);
-    writeFileSync(temp, JSON.stringify({ head, promptVersion: version, generatedAt, explanation }), { mode: 0o600, flag: "wx" });
-    chmodSync(temp, 0o600);
-    renameSync(temp, join(dir, name));
-    for (const old of readAll(dir).slice(KEEP_FILES)) {
+    await writeFile(temp, JSON.stringify({ head, promptVersion: version, generatedAt, explanation }), { mode: 0o600, flag: "wx" });
+    await chmod(temp, 0o600);
+    await rename(temp, join(dir, name));
+    for (const old of (await readAll(dir)).slice(KEEP_FILES)) {
       try {
-        unlinkSync(join(dir, old.name));
+        await unlink(join(dir, old.name));
       } catch {
         // already gone
       }
@@ -226,7 +226,7 @@ export function createExplainService(options: ExplainOptions = {}): ExplainServi
       const treePaths = new Set(input.facts.tree.map((n) => n.path));
       const explanation = parseExplanation(answer, treePaths);
       const generatedAt = now();
-      write(dir, head, explanation, generatedAt);
+      await write(dir, head, explanation, generatedAt);
       return { kind: "ok", result: { head, promptVersion: version, cached: false, generatedAt, explanation } };
     } catch {
       return { kind: "error" };
@@ -237,7 +237,7 @@ export function createExplainService(options: ExplainOptions = {}): ExplainServi
     async status(input) {
       const head = input.facts.head;
       if (head === null) return { head: null, promptVersion: version, estimate: null, cached: null, staleCached: null };
-      const all = readAll(folder(input.root));
+      const all = await readAll(await folder(input.root));
       const current = `${head}-v${version}.json`;
       return {
         head,
@@ -248,9 +248,9 @@ export function createExplainService(options: ExplainOptions = {}): ExplainServi
       };
     },
 
-    generate(input, head) {
-      const dir = folder(input.root);
-      const hit = readAll(dir).find((c) => c.name === `${head}-v${version}.json`);
+    async generate(input, head) {
+      const dir = await folder(input.root);
+      const hit = (await readAll(dir)).find((c) => c.name === `${head}-v${version}.json`);
       if (hit) {
         return Promise.resolve({ kind: "ok", result: { head, promptVersion: version, cached: true, generatedAt: hit.generatedAt, explanation: hit.explanation } });
       }
