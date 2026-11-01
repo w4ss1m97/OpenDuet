@@ -117,6 +117,7 @@ import {
 import { createPageRoutes, type PageStore } from "./openduet/pages";
 import { createItemRoutes } from "./openduet/items/routes";
 import type { ItemStore } from "./openduet/items/store";
+import type { PrepStore } from "./openduet/missions/prep-store";
 import { createMissionRoutes } from "./openduet/missions/routes";
 import type { MissionStore } from "./openduet/missions/store";
 import { createSetupRoutes, type SetupSources } from "./openduet/setup";
@@ -466,6 +467,8 @@ export function createApp(
       items?: ItemStore;
       /** The missions pipeline for the app. See openduet/missions. */
       missions?: MissionStore;
+      /** Interview prep sheets, served beside items and missions. See openduet/missions/prep-store.ts. */
+      preps?: PrepStore;
       setup?: SetupSources;
       tasks?: TaskStore;
       intake?: TaskIntake;
@@ -1715,12 +1718,18 @@ export function createApp(
   if (coworker?.openduet?.items)
     app.route(
       "/api/openduet/items",
-      createItemRoutes(coworker.openduet.items, requireUser),
+      createItemRoutes(
+        coworker.openduet.items,
+        requireUser,
+        coworker.openduet.missions && coworker.openduet.preps
+          ? { missions: coworker.openduet.missions, preps: coworker.openduet.preps }
+          : undefined,
+      ),
     );
   if (coworker?.openduet?.missions)
     app.route(
       "/api/openduet/missions",
-      createMissionRoutes(coworker.openduet.missions, requireUser),
+      createMissionRoutes(coworker.openduet.missions, requireUser, coworker.openduet.preps),
     );
   /*
    * Signed in, unlike `/api/capabilities`, which anybody can read. The checklist names what this

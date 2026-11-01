@@ -7,6 +7,10 @@ export type CalendarEvent = {
   summary: string;
   start: string;
   location?: string;
+  end?: string;
+  /** The organizer's address, and the attendees' (the person's own included). */
+  organizer?: string;
+  attendees?: string[];
 };
 
 const INTERVIEW = /entretien|interview|call client|qualif|échange avec|rdv client/i;

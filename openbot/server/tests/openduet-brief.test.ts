@@ -305,6 +305,54 @@ describe("morning brief missions section", () => {
   });
 });
 
+describe("morning brief interviews section", () => {
+  const complete = async () => '{"verdict":"can_wait","reason":"Routine."}';
+  const row = {
+    itemId: "it1",
+    title: "Entretien Acme",
+    dueAt: "2026-11-12T13:00:00.000Z",
+    missionId: "ms1",
+    prep: { status: "ready", content: { pitch: "p", likelyQuestions: ["q"], questionsToAsk: ["a"] } },
+  } as const;
+
+  test("is empty when no loader is wired", async () => {
+    const { callTool } = connector();
+    const brief = await buildMorningBrief({ callTool, model: "m", now: () => NOW, complete }, input);
+    expect(brief.interviews).toEqual([]);
+    expect(brief.couldNotCheck.map((c) => c.source)).not.toContain("Entretiens");
+  });
+
+  test("lists what the loader returns for this person", async () => {
+    const { callTool } = connector();
+    const asked: string[] = [];
+    const brief = await buildMorningBrief(
+      { callTool, model: "m", now: () => NOW, complete, interviews: async (owner) => (asked.push(owner), [row]) },
+      input,
+    );
+    expect(brief.interviews).toEqual([row]);
+    expect(asked).toEqual(["dev-local-user"]);
+  });
+
+  test("a loader that fails is named Entretiens and the rest of the brief stays", async () => {
+    const { callTool } = connector();
+    const brief = await buildMorningBrief(
+      {
+        callTool,
+        model: "m",
+        now: () => NOW,
+        complete,
+        interviews: async () => {
+          throw new Error("database is down");
+        },
+      },
+      input,
+    );
+    expect(brief.interviews).toEqual([]);
+    expect(brief.couldNotCheck).toEqual([{ source: "Entretiens", why: "database is down" }]);
+    expect(brief.checked.mail).toBe(3);
+  });
+});
+
 describe("the morning_brief tool", () => {
   test("returns the brief as JSON and refuses unknown arguments", async () => {
     let built = 0;
@@ -324,6 +372,7 @@ describe("the morning_brief tool", () => {
           calendar: [],
           couldNotCheck: [],
           missions: [],
+          interviews: [],
           checked: { mail: 0, byRules: 0, byModel: 0 },
         };
       },

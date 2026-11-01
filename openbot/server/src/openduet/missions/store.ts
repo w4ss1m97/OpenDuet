@@ -5,6 +5,7 @@ import { openduetItems } from "../../db/schema/openduet-items";
 import {
   type MissionEventSource,
   type OpenduetMission,
+  type OpenduetMissionEvent,
   type OpenduetMissionRelance,
   type RelanceStatus,
   openduetMissionEvents,
@@ -521,6 +522,16 @@ export function createMissionStore(db: Database) {
         }
         return row;
       });
+    },
+
+    /** The latest events of a mission, newest first, for the interview prep. */
+    async listEvents(ownerUserId: string, missionId: string, limit = 20): Promise<OpenduetMissionEvent[]> {
+      return db
+        .select()
+        .from(openduetMissionEvents)
+        .where(and(eq(openduetMissionEvents.ownerUserId, ownerUserId), eq(openduetMissionEvents.missionId, missionId)))
+        .orderBy(desc(openduetMissionEvents.at))
+        .limit(limit);
     },
 
     /** Contact addresses of active, open missions, for the mail intake's `from:(a OR b …)` query. */

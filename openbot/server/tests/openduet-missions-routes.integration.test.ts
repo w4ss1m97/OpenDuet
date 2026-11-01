@@ -6,6 +6,8 @@ import type { AppVariables } from "../src/auth/guards";
 import { createDatabase } from "../src/db/client";
 import { users } from "../src/db/schema/core";
 import { openduetMissions } from "../src/db/schema/openduet-missions";
+import { createItemStore } from "../src/openduet/items/store";
+import { createPrepStore } from "../src/openduet/missions/prep-store";
 import { createMissionRoutes } from "../src/openduet/missions/routes";
 import { createMissionStore } from "../src/openduet/missions/store";
 import { loadBriefMissions } from "../src/openduet/wiring";
@@ -25,7 +27,7 @@ const asActor: MiddlewareHandler<{ Variables: AppVariables }> = async (context, 
   context.set("actor", { id: actor } as AppVariables["actor"]);
   await next();
 };
-const app = new Hono().route("/api/openduet/missions", createMissionRoutes(store, asActor));
+const app = new Hono().route("/api/openduet/missions", createMissionRoutes(store, asActor, createPrepStore(database)));
 
 function request(actor: string | null, path: string, method = "GET", body?: unknown) {
   return app.request(`/api/openduet/missions${path}`, {
@@ -164,4 +166,20 @@ test("the brief loader lists open active missions with days in stage and whether
   } finally {
     await database.delete(users).where(eq(users.id, who));
   }
+});
+
+test("GET /:id/preps lists the mission's sheets, 404 for another person's mission", async () => {
+  const mission = await make(owner, { stage: "interview" });
+  const item = await createItemStore(database).insertIfNew(
+    owner,
+    { kind: "interview", title: "Entretien", dueAt: new Date(Date.now() + 3600_000), sourceApp: "gcal", sourceHash: `gcal:${randomUUID()}`, dateExplicit: true },
+    "active",
+    [],
+  );
+  await createPrepStore(database).ensurePending(owner, item?.id as string, mission.id);
+  const response = await request(owner, `/${mission.id}/preps`);
+  expect(response.status).toBe(200);
+  const { preps } = (await response.json()) as { preps: { itemId: string; status: string }[] };
+  expect(preps).toMatchObject([{ itemId: item?.id, status: "pending" }]);
+  expect((await request(other, `/${mission.id}/preps`)).status).toBe(404);
 });

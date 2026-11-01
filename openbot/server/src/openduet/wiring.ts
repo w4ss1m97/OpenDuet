@@ -6,10 +6,12 @@ import type { Database } from "../db/client";
 import { users } from "../db/schema";
 import { createProactiveStore } from "../proactive/store";
 import { ProactiveNotFoundError } from "../proactive/types";
-import { type BriefMission, buildMorningBrief, type CallTool, openduetTools } from "./brief";
+import { type BriefInterview, type BriefMission, buildMorningBrief, type CallTool, openduetTools } from "./brief";
 import { lastIntakeReport } from "./items/intake";
-import { createItemStore } from "./items/store";
+import { parisDayAt } from "./items/paris-time";
+import { createItemStore, type ItemStore } from "./items/store";
 import { intakeReportTools } from "./items/tool";
+import { createPrepStore, type PrepStore } from "./missions/prep-store";
 import { createMissionStore, type MissionStore } from "./missions/store";
 import { missionTools } from "./missions/tool";
 import { offerTools } from "./offers";
@@ -45,6 +47,28 @@ export async function loadBriefMissions(
     daysInStage: Math.max(0, Math.floor((now.getTime() - m.stageEnteredAt.getTime()) / DAY_MS)),
     relanceReady: waiting.has(m.id),
   }));
+}
+
+/** The brief's interviews: tomorrow in Paris, each with its sheet when one exists. */
+export async function loadBriefInterviews(
+  items: Pick<ItemStore, "listUpcomingInterviews">,
+  preps: Pick<PrepStore, "getByItem">,
+  ownerUserId: string,
+  now: Date,
+): Promise<BriefInterview[]> {
+  const tomorrow = await items.listUpcomingInterviews(ownerUserId, parisDayAt(now, 1, 0), parisDayAt(now, 2, 0));
+  return Promise.all(
+    tomorrow.map(async (item) => {
+      const prep = await preps.getByItem(ownerUserId, item.id);
+      return {
+        itemId: item.id,
+        title: item.title,
+        dueAt: (item.dueAt as Date).toISOString(),
+        missionId: item.missionId,
+        prep: prep ? { status: prep.status, content: prep.content } : null,
+      };
+    }),
+  );
 }
 
 /** How a card the person asked for is told from research's: its run id starts with this. */
@@ -206,6 +230,7 @@ export function createOpenDuetTools(deps: {
   const pages = deps.pages ?? createPageStore(deps.database);
   const items = createItemStore(deps.database);
   const missions = createMissionStore(deps.database);
+  const preps = createPrepStore(deps.database);
   return (actorId, botId, initiator) => [
     ...openduetTools({
       actorId,
@@ -225,6 +250,7 @@ export function createOpenDuetTools(deps: {
             complete: deps.complete,
             model: deps.model,
             missions: (ownerUserId) => loadBriefMissions(missions, ownerUserId, new Date()),
+            interviews: (ownerUserId) => loadBriefInterviews(items, preps, ownerUserId, new Date()),
           },
           input,
         ),

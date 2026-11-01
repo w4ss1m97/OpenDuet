@@ -1,8 +1,11 @@
 import { proactiveInitiator } from "../../proactive/restriction";
-import { CALENDAR_LIST, type CallTool, displayName, GMAIL_SEARCH } from "../brief";
-import { contactOf, missionSignal } from "../missions/mail-signal";
-import { type MatchedBy, type MissionStore, UntrustedMatchError } from "../missions/store";
+import { CALENDAR_LIST, type CallTool, displayName, GMAIL_READ, GMAIL_SEARCH } from "../brief";
+import { contactOf, missionSignal, namesCompany } from "../missions/mail-signal";
+import { MAX_PREPS_PER_RUN, PREP_WINDOW_MS, buildPrepPrompt, matchEventMission, parsePrep, prepDue } from "../missions/prep";
+import type { PrepStore } from "../missions/prep-store";
+import { IllegalTransitionError, type MatchedBy, type MissionStore, UntrustedMatchError } from "../missions/store";
 import type { MissionSignal, Stage } from "../missions/stages";
+import type { Complete } from "../triage";
 import { type CalendarEvent, parseEvent } from "./calendar-parser";
 import { classify, defaultRemindAt } from "./classify";
 import { MAIL_QUERIES, type MailMessage, parseMail } from "./mail-parsers";
@@ -47,6 +50,8 @@ export type IntakeDeps = {
   scannerTimeoutMs?: number;
   /** The missions pipeline. Absent, mail is read exactly as before and nothing touches missions. */
   missions?: MissionStore;
+  /** Interview prep sheets. Needs `missions`; absent, no sheet is written. `timeoutMs` bounds one generation (60 s). */
+  prep?: { store: PrepStore; complete: Complete; timeoutMs?: number };
 };
 
 type ScanResult = {
@@ -54,6 +59,8 @@ type ScanResult = {
   cursor: unknown;
   /** Mail scanner only: the messages read, and which of them came from a mission contact. */
   mails?: { messages: MailMessage[]; fromContacts: Set<string> };
+  /** Calendar scanner only: the events read, to tie each interview to its mission. */
+  events?: CalendarEvent[];
 };
 
 const SIGNAL_STAGE: Record<MissionSignal, Stage> = {
@@ -62,30 +69,6 @@ const SIGNAL_STAGE: Record<MissionSignal, Stage> = {
   invite: "interview",
   reply: "talking",
 };
-/** Names that stand for a platform, never for the company behind an offer. */
-const PLATFORM_KEYS = new Set(["malt", "freework", "collective", "linkedin"]);
-const MAX_RUN_WORDS = 5;
-
-/** Whether the words of `text`, run together, spell the company key as whole words. */
-function namesCompany(text: string, key: string): boolean {
-  if (key.length < 3 || PLATFORM_KEYS.has(key)) return false;
-  const words = text
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean);
-  for (let start = 0; start < words.length; start += 1) {
-    let run = "";
-    for (let end = start; end < Math.min(words.length, start + MAX_RUN_WORDS); end += 1) {
-      run += words[end];
-      if (run === key) return true;
-      if (run.length >= key.length) break;
-    }
-  }
-  return false;
-}
-
 /**
  * One mail about a mission: find its mission (thread, contact, then a company named in the words),
  * move it, and tie the mail's item to it. An unmatched mission mail becomes a proposed piste.
@@ -159,6 +142,40 @@ async function applyMailToMissions(
   if (candidate) await deps.store.linkMission(ownerUserId, candidate.sourceHash, mission.id);
 }
 
+/**
+ * Ties each interview in the calendar to its mission. A contact among the attendees is proof enough to
+ * move the mission to `interview` (forward only, so a later stage stays); a company in the title only links.
+ * Idempotent: a failed run is simply read again.
+ */
+async function linkInterviews(
+  deps: Required<Pick<IntakeDeps, "missions" | "store">>,
+  ownerUserId: string,
+  events: CalendarEvent[],
+): Promise<void> {
+  const interviews = events.filter((e) => parseEvent(e) !== null);
+  if (interviews.length === 0) return;
+  const open = await deps.missions.list(ownerUserId, { open: true, review: ["active"] });
+  for (const event of interviews) {
+    const found = matchEventMission(event, open);
+    if (!found) continue;
+    const sourceHash = `gcal:${event.id}`;
+    const linked = await deps.store.linkMission(ownerUserId, sourceHash, found.mission.id);
+    // Only the mission the interview is actually tied to moves; an earlier (or manual) link wins.
+    if (found.by !== "contact" || linked !== found.mission.id) continue;
+    try {
+      // The events table has no 'calendar' source: 'app' is the closest, a person-made change rather than a mail.
+      await deps.missions.advance(ownerUserId, found.mission.id, {
+        to: "interview",
+        source: "app",
+        sourceHash,
+        matchedBy: "contact",
+      });
+    } catch (error) {
+      if (!(error instanceof IllegalTransitionError)) throw error;
+    }
+  }
+}
+
 const reports = new Map<string, IntakeReport>();
 
 /** The last intake for this person since the server started, for the brief. */
@@ -230,9 +247,11 @@ export async function runIntake(
         timeMin: now.toISOString(),
         timeMax: new Date(now.getTime() + CALENDAR_DAYS * DAY_MS).toISOString(),
       })) as { events?: CalendarEvent[] };
+      const events = found.events ?? [];
       return {
-        candidates: (found.events ?? []).flatMap((e) => parseEvent(e) ?? []),
+        candidates: events.flatMap((e) => parseEvent(e) ?? []),
         cursor: {},
+        events,
       };
     },
     notes: async (lastSuccessAt) => {
@@ -256,7 +275,7 @@ export async function runIntake(
     (Object.keys(scanners) as Scanner[]).map(async (scanner) => {
       try {
         const { lastSuccessAt } = await deps.store.getCursor(ownerUserId, scanner);
-        const { candidates, cursor, mails } = await withDeadline(
+        const { candidates, cursor, mails, events } = await withDeadline(
           scanners[scanner](lastSuccessAt),
           deps.scannerTimeoutMs ?? 90_000,
         );
@@ -282,6 +301,9 @@ export async function runIntake(
             );
           }
         }
+        if (deps.missions && events) {
+          await linkInterviews({ missions: deps.missions, store: deps.store }, ownerUserId, events);
+        }
         await deps.store.advanceCursor(ownerUserId, scanner, cursor, now);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -292,6 +314,9 @@ export async function runIntake(
   );
   if (deps.missions && !report.failed.some((f) => f.scanner === "mail")) {
     await relanceSweep(deps.missions, ownerUserId, now);
+  }
+  if (deps.missions && deps.prep) {
+    await prepSweep({ missions: deps.missions, store: deps.store, prep: deps.prep, call }, ownerUserId, now);
   }
   report.failed.sort((a, b) => a.scanner.localeCompare(b.scanner));
   reports.set(ownerUserId, report);
@@ -324,4 +349,92 @@ async function relanceSweep(missions: MissionStore, ownerUserId: string, now: Da
       }),
     );
   }
+}
+
+const PREP_MAIL_SEARCH = 5;
+const PREP_MAIL_READ = 3;
+const PREP_EVENTS = 20;
+const PREP_TIMEOUT_MS = 60_000;
+
+type Call = (ref: string, args: Record<string, unknown>) => Promise<unknown>;
+
+function logPrepError(error: unknown): void {
+  console.error(
+    JSON.stringify({
+      type: "openduet-prep-error",
+      error: error instanceof Error ? error.name : "UnknownError",
+      timestamp: new Date().toISOString(),
+    }),
+  );
+}
+
+/**
+ * A sheet for each interview due within 72 hours whose mission is open and active: at most three
+ * generations a run, each attempt counted, each failure kept as the sheet's state. Never throws:
+ * the sweep failing must not fail the intake.
+ */
+async function prepSweep(
+  deps: Required<Pick<IntakeDeps, "missions" | "store" | "prep">> & { call: Call },
+  ownerUserId: string,
+  now: Date,
+): Promise<void> {
+  try {
+    const { missions, prep, call } = deps;
+    const upcoming = await deps.store.listUpcomingInterviews(ownerUserId, now, new Date(now.getTime() + PREP_WINDOW_MS));
+    let generated = 0;
+    for (const item of upcoming) {
+      if (generated >= MAX_PREPS_PER_RUN) break;
+      if (!item.missionId) continue;
+      try {
+        const mission = await missions.get(ownerUserId, item.missionId).catch(() => null);
+        const current = await prep.store.getByItem(ownerUserId, item.id);
+        if (!prepDue(item, mission, current, now) || !mission) continue;
+        await prep.store.ensurePending(ownerUserId, item.id, mission.id);
+        const claim = await prep.store.claim(ownerUserId, item.id);
+        if (!claim?.claimedAt) continue;
+        generated += 1;
+        try {
+          const events = await missions.listEvents(ownerUserId, mission.id, PREP_EVENTS);
+          const mails = await prepMails(call, mission.contactEmails);
+          const prompt = buildPrepPrompt({
+            mission,
+            events,
+            interview: { title: item.title, dueAt: item.dueAt },
+            mails,
+          });
+          const controller = new AbortController();
+          const text = await withDeadline(prep.complete(prompt, controller.signal), prep.timeoutMs ?? PREP_TIMEOUT_MS).catch(
+            (error) => {
+              controller.abort();
+              throw error;
+            },
+          );
+          await prep.store.complete(ownerUserId, item.id, claim.claimedAt, parsePrep(text));
+        } catch (error) {
+          logPrepError(error);
+          await prep.store.fail(ownerUserId, item.id, claim.claimedAt, error instanceof Error ? error.name : "UnknownError");
+        }
+      } catch (error) {
+        logPrepError(error);
+      }
+    }
+  } catch (error) {
+    logPrepError(error);
+  }
+}
+
+/** The first mails with the mission's contacts, read in full. None when the mission has no contact. */
+async function prepMails(call: Call, contacts: string[]): Promise<{ from: string; subject: string; body: string }[]> {
+  if (contacts.length === 0) return [];
+  const list = contacts.slice(0, 20).join(" OR ");
+  const found = (await call(GMAIL_SEARCH, {
+    query: `from:(${list}) OR to:(${list}) newer_than:90d`,
+    maxResults: PREP_MAIL_SEARCH,
+  })) as { messages?: MailMessage[] };
+  const mails: { from: string; subject: string; body: string }[] = [];
+  for (const m of (found.messages ?? []).slice(0, PREP_MAIL_READ)) {
+    const read = (await call(GMAIL_READ, { id: m.id })) as { from?: string; subject?: string; body?: string };
+    mails.push({ from: read.from ?? m.from, subject: read.subject ?? m.subject, body: read.body ?? m.snippet });
+  }
+  return mails;
 }

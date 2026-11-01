@@ -5,10 +5,12 @@ import { type FakeGoogle, startFakeGoogle } from "../../scripts/fake-google/serv
 import { createDatabase } from "../src/db/client";
 import { users } from "../src/db/schema/core";
 import { openduetItems } from "../src/db/schema/openduet-items";
+import { openduetInterviewPreps } from "../src/db/schema/openduet-interview-preps";
 import { openduetMissionRelances, openduetMissions } from "../src/db/schema/openduet-missions";
 import type { CallTool } from "../src/openduet/brief";
 import { runIntake } from "../src/openduet/items/intake";
 import { createItemStore } from "../src/openduet/items/store";
+import { createPrepStore } from "../src/openduet/missions/prep-store";
 import { createMissionStore } from "../src/openduet/missions/store";
 import { callTool as callGoogle } from "../src/plugins/google-workspace-rest";
 import { TEST_POOL, testDatabaseUrl } from "./support/database";
@@ -245,4 +247,131 @@ test("a silent mission gets one relance after a good run, none when the mail sca
   expect(await relances()).toHaveLength(1);
   await runIntake(depsFor(call), me, "bot");
   expect(await relances()).toHaveLength(1);
+});
+
+// ---- Interview prep ------------------------------------------------------------------------------
+
+const preps = createPrepStore(database);
+const sheet = JSON.stringify({ pitch: "Pitch.", likelyQuestions: ["Q ?"], questionsToAsk: ["A ?"] });
+const inHours = (h: number) => new Date(Date.now() + h * 3600_000).toISOString();
+
+type FakeEvent = { id: string; summary: string; start: string; organizer?: string; attendees?: string[] };
+
+/** The fake calendar cannot be fed events: this serves the given ones and an empty prep mail search. */
+function withEvents(events: FakeEvent[], searches: string[] = []): CallTool {
+  return async (input) => {
+    if (input.ref.endsWith("calendar_list_events")) return { text: JSON.stringify({ events }), isError: false };
+    if (input.ref.endsWith("gmail_search_messages") && String(input.args.query).includes(" OR to:(")) {
+      searches.push(String(input.args.query));
+      return { text: JSON.stringify({ messages: [] }), isError: false };
+    }
+    return call(input);
+  };
+}
+const prepDeps = (callTool: CallTool, complete: (prompt: string) => Promise<string>) => ({
+  ...depsFor(callTool),
+  prep: { store: preps, complete },
+});
+const itemOf = async (who: string, event: FakeEvent) =>
+  (await database.select().from(openduetItems).where(and(eq(openduetItems.ownerUserId, who), eq(openduetItems.sourceHash, `gcal:${event.id}`))))[0];
+const sheetsOf = async (who: string) =>
+  database.select().from(openduetInterviewPreps).where(eq(openduetInterviewPreps.ownerUserId, who));
+
+test("an attendee who is a mission contact links the interview, moves the mission and writes the sheet", async () => {
+  const me = await person();
+  const t = tag();
+  const contact = `rh${t}@prep-contact.test`;
+  const { mission } = await missions.createPiste(me, { company: `Eps${t}`, review: "active", stage: "applied", contactEmail: contact });
+  const event = { id: `ev${t}`, summary: "Entretien technique", start: inHours(24), attendees: ["me@x.fr", contact.toUpperCase()] };
+  const searches: string[] = [];
+  const prompts: string[] = [];
+  await runIntake(prepDeps(withEvents([event], searches), async (p) => (prompts.push(p), sheet)), me, "bot");
+  expect((await itemOf(me, event))?.missionId).toBe(mission.id);
+  expect((await missions.get(me, mission.id)).stage).toBe("interview");
+  expect(searches[0]).toContain(`from:(${contact})`);
+  expect(prompts).toHaveLength(1);
+  expect(await sheetsOf(me)).toMatchObject([{ status: "ready", missionId: mission.id, attempts: 1 }]);
+});
+
+test("a contact match does not move another mission than the one the interview is already tied to", async () => {
+  const me = await person();
+  const t = tag();
+  const contact = `rh${t}@prep-contact.test`;
+  const { mission: picked } = await missions.createPiste(me, { company: `Pick${t}`, review: "active", stage: "talking" });
+  const { mission: other } = await missions.createPiste(me, { company: `Oth${t}`, review: "active", stage: "applied", contactEmail: contact });
+  const bare = { id: `ev${t}`, summary: "Entretien technique", start: inHours(24) };
+  await runIntake(prepDeps(withEvents([bare]), async () => sheet), me, "bot");
+  const item = await itemOf(me, bare);
+  await store.setMission(me, item!.id, picked.id);
+  await runIntake(prepDeps(withEvents([{ ...bare, attendees: [contact] }]), async () => sheet), me, "bot");
+  expect((await itemOf(me, bare))?.missionId).toBe(picked.id);
+  expect((await missions.get(me, other.id)).stage).toBe("applied");
+});
+
+test("a company in the title links without moving the stage", async () => {
+  const me = await person();
+  const t = tag();
+  const { mission } = await missions.createPiste(me, { company: `Zeta${t}`, review: "active", stage: "applied" });
+  const event = { id: `ev${t}`, summary: `Entretien Zeta${t} - lead`, start: inHours(20) };
+  await runIntake(prepDeps(withEvents([event]), async () => sheet), me, "bot");
+  expect((await itemOf(me, event))?.missionId).toBe(mission.id);
+  expect((await missions.get(me, mission.id)).stage).toBe("applied");
+  expect(await sheetsOf(me)).toHaveLength(1);
+});
+
+test("a model that throws fails the sheet, not the intake; it is retried, then left after three attempts", async () => {
+  const me = await person();
+  const t = tag();
+  await missions.createPiste(me, { company: `Eta${t}`, review: "active", stage: "interview" });
+  const event = { id: `ev${t}`, summary: `Entretien Eta${t}`, start: inHours(20) };
+  let calls = 0;
+  const deps = prepDeps(withEvents([event]), async () => {
+    calls += 1;
+    throw new TypeError("secret mail text");
+  });
+  const report = await runIntake(deps, me, "bot");
+  expect(report.failed.map((f) => f.scanner)).not.toContain("calendar");
+  expect(await sheetsOf(me)).toMatchObject([{ status: "failed", attempts: 1, lastError: "TypeError" }]);
+  for (let i = 0; i < 4; i += 1) await runIntake(deps, me, "bot");
+  expect(calls).toBe(3);
+  expect(await sheetsOf(me)).toMatchObject([{ status: "failed", attempts: 3 }]);
+});
+
+test("without the prep dependency nothing is written", async () => {
+  const me = await person();
+  const t = tag();
+  await missions.createPiste(me, { company: `Theta${t}`, review: "active", stage: "interview" });
+  const event = { id: `ev${t}`, summary: `Entretien Theta${t}`, start: inHours(20) };
+  await runIntake(depsFor(withEvents([event])), me, "bot");
+  expect((await itemOf(me, event))?.missionId).not.toBeNull();
+  expect(await sheetsOf(me)).toHaveLength(0);
+});
+
+test("at most three sheets are generated per run", async () => {
+  const me = await person();
+  const events: FakeEvent[] = [];
+  for (let i = 0; i < 5; i += 1) {
+    const t = tag();
+    await missions.createPiste(me, { company: `Iota${t}`, review: "active", stage: "interview" });
+    events.push({ id: `ev${t}`, summary: `Entretien Iota${t}`, start: inHours(10 + i) });
+  }
+  let calls = 0;
+  const deps = prepDeps(withEvents(events), async () => (calls += 1, sheet));
+  await runIntake(deps, me, "bot");
+  expect(calls).toBe(3);
+  await runIntake(deps, me, "bot");
+  expect(calls).toBe(5);
+});
+
+test("a ready sheet is kept when the event moves", async () => {
+  const me = await person();
+  const t = tag();
+  await missions.createPiste(me, { company: `Kappa${t}`, review: "active", stage: "interview" });
+  const event = { id: `ev${t}`, summary: `Entretien Kappa${t}`, start: inHours(20) };
+  let calls = 0;
+  const complete = async () => (calls += 1, sheet);
+  await runIntake(prepDeps(withEvents([event]), complete), me, "bot");
+  await runIntake(prepDeps(withEvents([{ ...event, start: inHours(30) }]), complete), me, "bot");
+  expect(calls).toBe(1);
+  expect(await sheetsOf(me)).toMatchObject([{ status: "ready" }]);
 });

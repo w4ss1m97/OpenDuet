@@ -16,6 +16,7 @@ import { runIntake } from "./openduet/items/intake";
 import { localHostRunner } from "./openduet/items/local-runner";
 import { loadProjects } from "./openduet/items/project-scanner";
 import { createItemStore } from "./openduet/items/store";
+import { createPrepStore } from "./openduet/missions/prep-store";
 import { createMissionStore } from "./openduet/missions/store";
 import { createActivityStore } from "./activity/activity";
 import {
@@ -2307,6 +2308,21 @@ const intakeProjects = (() => {
 })();
 const intakeItems = createItemStore(database);
 const intakeMissions = createMissionStore(database);
+const intakePreps = createPrepStore(database);
+// Interview sheets are longer than a routing answer: more tokens, and a minute rather than ten seconds.
+const prepComplete = createModelCompleter({
+  model: runtimeModel,
+  maxTokens: 2048,
+  timeoutMs: 60_000,
+  resolveApiKey: () =>
+    resolveModelApiKey({
+      encryptionKey: config.keyEncryptionKey,
+      reader: credentialStore,
+      provider: runtimeModel.provider,
+      keyId: tenantPackage.model.credentialSecretRef,
+      environment: process.env,
+    }),
+});
 const intakeEveryone = async () => {
   const people = await database
     .selectDistinct({
@@ -2321,6 +2337,7 @@ const intakeEveryone = async () => {
         {
           store: intakeItems,
           missions: intakeMissions,
+          prep: { store: intakePreps, complete: prepComplete },
           callTool: (input) => pluginStore.callTool(input),
           host: intakeHost,
           projects: intakeProjects,
@@ -2787,6 +2804,7 @@ const app = createApp(
       tasks: openDuetTasks,
       items: intakeItems,
       missions: intakeMissions,
+      preps: intakePreps,
       // The checklist onboarding ends on. Facts and verdicts about this configuration, never values.
       setup: createSetupSources({
         productName: tenantPackage.productName,
