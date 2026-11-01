@@ -5,6 +5,7 @@ import type { AppVariables } from "../../auth/guards";
 import type { OfferPlatform, OpenduetOffer } from "../../db/schema/openduet-job-offers";
 import type { Complete } from "../triage";
 import type { MissionStore } from "../missions/store";
+import { RevisionError, type RevisionGenerator } from "../revision/generate";
 import { type CvRouteDeps, registerOfferCvRoutes } from "./cv-routes";
 import { htmlToText } from "./extract";
 import { askModel, extractAndStore, OFFER_CALL_TIMEOUT_MS, scoreOffer } from "./pipeline";
@@ -50,6 +51,8 @@ export type OfferRouteDeps = {
   complete: Complete;
   /** The tailored CV of an offer (A3b). Absent: the `/:id/cv` routes are not served. */
   cv?: CvRouteDeps;
+  /** Revision cards of an offer (A3c). Absent: `POST /:id/revision` is not served. */
+  revision?: Pick<RevisionGenerator, "generateForOffer">;
   /** Overall bound of a paste (120 s). One model call is bounded at 60 s. */
   overallMs?: number;
 };
@@ -138,6 +141,24 @@ export function createOfferRoutes(deps: OfferRouteDeps, requireUser: MiddlewareH
 
   // Before the `/:id` routes.
   if (deps.cv) registerOfferCvRoutes(routes, deps.cv, store);
+  if (deps.revision) {
+    const revision = deps.revision;
+    routes.post("/:id/revision", async (context) => {
+      const owner = context.var.actor.id;
+      const offer = await store.get(owner, context.req.param("id"));
+      if (!offer) return notFound(context);
+      try {
+        const cards = await revision.generateForOffer(owner, offer, { regenerate: context.req.query("regenerate") === "1" });
+        return context.json({ cards });
+      } catch (error) {
+        if (error instanceof RevisionError) return context.json({ error: "Ajoute d'abord ton CV maître.", code: "no_master" }, 409);
+        console.error(
+          JSON.stringify({ type: "openduet-revision-offer-error", error: errorName(error), timestamp: new Date().toISOString() }),
+        );
+        return context.json({ error: "Impossible de préparer les fiches de cette offre. Réessaie.", code: "revision_failed" }, 503);
+      }
+    });
+  }
 
   routes.get("/:id", async (context) => {
     const offer = await store.get(context.var.actor.id, context.req.param("id"));

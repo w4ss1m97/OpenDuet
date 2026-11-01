@@ -122,6 +122,7 @@ import type { ItemStore } from "./openduet/items/store";
 import type { PrepStore } from "./openduet/missions/prep-store";
 import { createCvRoutes } from "./openduet/job-offers/cv-routes";
 import { createOfferRoutes, type OfferRouteDeps } from "./openduet/job-offers/routes";
+import { createRevisionRoutes, type RevisionRouteDeps } from "./openduet/revision/routes";
 import { createMissionRoutes } from "./openduet/missions/routes";
 import type { MissionStore } from "./openduet/missions/store";
 import { createSetupRoutes, type SetupSources } from "./openduet/setup";
@@ -477,6 +478,8 @@ export function createApp(
       debrief?: { store: DebriefStore; source: AnarlogSource | null };
       /** Job offers (A3a): list, dismiss, apply, paste. Needs `missions` to be served. See openduet/job-offers. */
       offers?: Omit<OfferRouteDeps, "missions">;
+      /** Revision deck (A3c). Needs `items` and `offers` (focus) to be served. See openduet/revision. */
+      revision?: Omit<RevisionRouteDeps, "items" | "offers">;
       setup?: SetupSources;
       tasks?: TaskStore;
       intake?: TaskIntake;
@@ -1743,6 +1746,14 @@ export function createApp(
     app.route(
       "/api/openduet/offers",
       createOfferRoutes({ ...coworker.openduet.offers, missions: coworker.openduet.missions }, requireUser),
+    );
+  if (coworker?.openduet?.revision && coworker.openduet.items && coworker.openduet.offers)
+    app.route(
+      "/api/openduet/revision",
+      createRevisionRoutes(
+        { ...coworker.openduet.revision, items: coworker.openduet.items, offers: coworker.openduet.offers.store },
+        requireUser,
+      ),
     );
   if (coworker?.openduet?.offers?.cv)
     app.route("/api/openduet/cv", createCvRoutes(coworker.openduet.offers.cv, requireUser));
