@@ -108,8 +108,8 @@ describe("loadSessions", () => {
   });
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-  test("keeps only the allowed fields of live sessions from *.json", () => {
-    const list = loadSessions(dir, (pid) => pid === 11);
+  test("keeps only the allowed fields of live sessions from *.json", async () => {
+    const list = await loadSessions(dir, (pid) => pid === 11);
     expect(list).toEqual([{ pid: 11, sessionId: "s1", cwd: "/h/demo", name: "chat", status: "busy", updatedAt: 5 }]);
   });
 });
