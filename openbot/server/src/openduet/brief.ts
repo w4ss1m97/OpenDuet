@@ -76,6 +76,13 @@ export type BriefOffer = {
   remote: string;
 };
 
+/** The revision deck today: cards due, new ones, and the company of an interview within three days. */
+export type BriefRevision = {
+  dueToday: number;
+  newCount: number;
+  focus?: { company: string; skills: string[] };
+};
+
 export type MorningBrief = {
   /** ISO 8601, when the brief was made. */
   at: string;
@@ -90,6 +97,8 @@ export type MorningBrief = {
   interviews: BriefInterview[];
   /** Freelance offers scored high in the last 24 hours; empty when none, or when they could not be read (see couldNotCheck). */
   offers: BriefOffer[];
+  /** Revision cards to review; absent when the deck is empty, or when it could not be read (see couldNotCheck). */
+  revision?: BriefRevision;
   /** Each source that could not be read, and why, in words the person can act on. */
   couldNotCheck: { source: string; why: string }[];
   checked: { mail: number; byRules: number; byModel: number };
@@ -219,6 +228,8 @@ export async function buildMorningBrief(
     interviews?: (ownerUserId: string) => Promise<BriefInterview[]>;
     /** Reads this person's best new job offers. Absent, the brief has no offers section. */
     offers?: (ownerUserId: string) => Promise<BriefOffer[]>;
+    /** Reads this person's revision deck. Null: nothing to revise. Absent, the brief has no revision section. */
+    revision?: (ownerUserId: string) => Promise<BriefRevision | null>;
   },
   input: {
     actorId: string;
@@ -373,6 +384,14 @@ export async function buildMorningBrief(
       brief.offers = await deps.offers(input.actorId);
     } catch (error) {
       couldNotCheck.push({ source: "Offres", why: why(error) });
+    }
+  }
+  if (deps.revision) {
+    try {
+      const revision = await deps.revision(input.actorId);
+      if (revision) brief.revision = revision;
+    } catch (error) {
+      couldNotCheck.push({ source: "Révision", why: why(error) });
     }
   }
   return brief;

@@ -342,6 +342,16 @@ export function createOfferStore(db: Database) {
         .orderBy(sql`${o.score} DESC NULLS LAST`, desc(o.scoredAt))
         .limit(limit);
     },
+
+    /** The owner's offers applied to through one of these missions (A3c focus). */
+    async listByMissionIds(owner: string, missionIds: string[]): Promise<OpenduetOffer[]> {
+      if (missionIds.length === 0) return [];
+      return db
+        .select()
+        .from(o)
+        .where(and(eq(o.ownerUserId, owner), inArray(o.missionId, missionIds)))
+        .orderBy(o.createdAt, o.id);
+    },
   };
 }
 

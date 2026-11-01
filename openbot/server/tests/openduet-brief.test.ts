@@ -404,6 +404,50 @@ describe("morning brief offers section", () => {
   });
 });
 
+describe("morning brief revision section", () => {
+  const complete = async () => '{"verdict":"can_wait","reason":"Routine."}';
+
+  test("is absent when no loader is wired or the deck is empty", async () => {
+    const { callTool } = connector();
+    const plain = await buildMorningBrief({ callTool, model: "m", now: () => NOW, complete }, input);
+    expect(plain.revision).toBeUndefined();
+    const empty = await buildMorningBrief({ callTool, model: "m", now: () => NOW, complete, revision: async () => null }, input);
+    expect(empty.revision).toBeUndefined();
+    expect(empty.couldNotCheck).toEqual([]);
+  });
+
+  test("carries what the loader returns for this person", async () => {
+    const { callTool } = connector();
+    const asked: string[] = [];
+    const value = { dueToday: 3, newCount: 2, focus: { company: "Acme", skills: ["AWS", "Go"] } };
+    const brief = await buildMorningBrief(
+      { callTool, model: "m", now: () => NOW, complete, revision: async (owner) => (asked.push(owner), value) },
+      input,
+    );
+    expect(brief.revision).toEqual(value);
+    expect(asked).toEqual(["dev-local-user"]);
+  });
+
+  test("a loader that fails is named Révision and the rest of the brief stays", async () => {
+    const { callTool } = connector();
+    const brief = await buildMorningBrief(
+      {
+        callTool,
+        model: "m",
+        now: () => NOW,
+        complete,
+        revision: async () => {
+          throw new Error("database is down");
+        },
+      },
+      input,
+    );
+    expect(brief.revision).toBeUndefined();
+    expect(brief.couldNotCheck).toEqual([{ source: "Révision", why: "database is down" }]);
+    expect(brief.checked.mail).toBe(3);
+  });
+});
+
 describe("the morning_brief tool", () => {
   test("returns the brief as JSON and refuses unknown arguments", async () => {
     let built = 0;

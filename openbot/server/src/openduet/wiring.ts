@@ -6,12 +6,14 @@ import type { Database } from "../db/client";
 import { users } from "../db/schema";
 import { createProactiveStore } from "../proactive/store";
 import { ProactiveNotFoundError } from "../proactive/types";
-import { type BriefInterview, type BriefMission, type BriefOffer, buildMorningBrief, type CallTool, openduetTools } from "./brief";
+import { type BriefInterview, type BriefMission, type BriefOffer, type BriefRevision, buildMorningBrief, type CallTool, openduetTools } from "./brief";
 import { createOfferStore, type OfferStore } from "./job-offers/store";
 import { lastIntakeReport } from "./items/intake";
 import { parisDayAt } from "./items/paris-time";
 import { createItemStore, type ItemStore } from "./items/store";
 import { intakeReportTools } from "./items/tool";
+import { createRevisionStore, type RevisionStore } from "./revision/store";
+import { focusOffers } from "./revision/routes";
 import { createPrepStore, type PrepStore } from "./missions/prep-store";
 import { createMissionStore, type MissionStore } from "./missions/store";
 import { missionTools } from "./missions/tool";
@@ -89,6 +91,26 @@ export async function loadBriefOffers(
     tjmMax: o.tjmMax,
     remote: o.remote,
   }));
+}
+
+/**
+ * The brief's revision: cards due today and new ones, and the company of an interview within three days
+ * (its offer's first three skills). Null when the deck is empty.
+ */
+export async function loadBriefRevision(
+  deps: {
+    revision: Pick<RevisionStore, "countDue">;
+    items: Pick<ItemStore, "listUpcomingInterviews">;
+    offers: Pick<OfferStore, "listByMissionIds">;
+  },
+  ownerUserId: string,
+  now: Date,
+): Promise<BriefRevision | null> {
+  const { dueToday, newCount } = await deps.revision.countDue(ownerUserId, now);
+  if (dueToday === 0 && newCount === 0) return null;
+  const [next] = await focusOffers(deps, ownerUserId, now);
+  if (!next?.offer.company) return { dueToday, newCount };
+  return { dueToday, newCount, focus: { company: next.offer.company, skills: next.offer.skills.slice(0, 3) } };
 }
 
 /** How a card the person asked for is told from research's: its run id starts with this. */
@@ -252,6 +274,7 @@ export function createOpenDuetTools(deps: {
   const missions = createMissionStore(deps.database);
   const preps = createPrepStore(deps.database);
   const offers = createOfferStore(deps.database);
+  const revision = createRevisionStore(deps.database);
   return (actorId, botId, initiator) => [
     ...openduetTools({
       actorId,
@@ -273,6 +296,7 @@ export function createOpenDuetTools(deps: {
             missions: (ownerUserId) => loadBriefMissions(missions, ownerUserId, new Date()),
             interviews: (ownerUserId) => loadBriefInterviews(items, preps, ownerUserId, new Date()),
             offers: (ownerUserId) => loadBriefOffers(offers, ownerUserId, new Date()),
+            revision: (ownerUserId) => loadBriefRevision({ revision, items, offers }, ownerUserId, new Date()),
           },
           input,
         ),

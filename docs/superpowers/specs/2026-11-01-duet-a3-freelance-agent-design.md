@@ -231,3 +231,98 @@ APNs in duet-ios) · alert mails no longer make "à suivre" items · LinkedIn ex
 ### Risks
 Playwright pipe under Bun may hang → fallback `Bun.spawn(chrome --headless --print-to-pdf)` · 2 pages not guaranteed
 (check by hand) · selection-only = less tailored · Chrome auto-update drift → 503 · offer text fenced, same provider.
+
+## A3c — Revision cards (micro-spec, draft for the architect)
+
+- **Goal:** Wassim keeps his DevOps/cloud knowledge fresh and has ready answers in interviews: question/answer cards
+  from his master CV, reviewed a few a day (spaced repetition), and focused on an offer's stack before an interview.
+- **Files:** db/schema/openduet-revision.ts (+ drizzle.config), migration 0074, src/openduet/revision/{cards.ts
+  (prompts, zod, dedup), leitner.ts (pure scheduling), store.ts, routes.ts}, brief.ts + wiring.ts (count due today),
+  missions/tool.ts or a new revision/tool.ts (chat quiz, if the OpenDuet chat agent is the right place — check),
+  app.ts, index.ts.
+- **Card kinds:**
+  - `concept`: a technical question on a skill of the master (EKS IRSA, Terraform state/locking, blue/green vs
+    canary, SLI/SLO/error budget, VPC peering vs Transit Gateway…), with a short model answer (≤ 120 words) and 2–4
+    key points. Answer from general knowledge (it is study material, not a claim about Wassim).
+  - `story`: a STAR answer (situation, task, action, result) for one or more master bullets, using ONLY the bullet's
+    facts and numbers ("parlez-moi d'une migration", "un incident", "une optimisation de coûts"). Source bullet ids
+    stored; numbers in the answer must appear in the source bullets (code check, else card dropped).
+  - `pitch`: "Présentez-vous en 2 minutes", FR and EN, from the master profile + experiences (facts from master only).
+- **Generation:** on demand. `POST /api/openduet/revision/generate` (whole master: per skill group/top techs, ≤ 40
+  concept + ≤ 12 story + 2 pitch, a few LLM calls, idempotent by dedup key = sha256(kind|topic|question normalized));
+  `POST /api/openduet/offers/:id/revision` (cards for that offer's skills, covered AND missing, ≤ 15, tagged with the
+  offer id). Master changed → story/pitch cards marked stale (master_hash).
+- **Review (Leitner, pure):** boxes 1–5, intervals 1/2/4/8/16 days; grade `again` → box 1 due tomorrow, `hard` → same
+  box, `good` → box+1. `GET /api/openduet/revision/today?limit=5` (due first, then new; offer-tagged cards first when
+  an interview with that mission is ≤ 3 days away), `POST /api/openduet/revision/cards/:id/review {grade}`,
+  `GET /api/openduet/revision/cards?topic=&kind=`, `POST /:id/archive`.
+- **Brief:** `revision {dueToday, offerFocus?}` line ("5 fiches à réviser, focus Kubernetes pour l'entretien Acme").
+- **Chat quiz:** "interroge-moi sur EKS" → the agent fetches due cards on that topic, asks one, grades the answer
+  (again/hard/good) and records it. Placement depends on where the phone chat lives (duet-ios backend vs OpenDuet).
+- **Edge cases:** no master → 409 no_master · same card generated twice → one row · story citing a number not in
+  the bullets → dropped · 0 due cards → today returns new cards.
+- **Tests:** leitner table (grades × boxes, due dates), card zod + number check + dedup, store (owner, idempotent
+  insert, review updates box/due atomically, archive), routes (404 other owner, no_master, today ordering with an
+  upcoming interview), brief line.
+- **Out of scope:** the iOS review screen (duet-ios session), audio/voice quiz, English for concept cards beyond
+  the pitch, sharing decks.
+
+## A3c — Reviewed spec (architect, 2026-11-01) — supersedes the draft above
+
+### Facts checked
+- Interview link exists: openduet_items.mission_id (kind interview|followup), itemStore.listUpcomingInterviews(owner,
+  from, to); openduet_offers.mission_id (set by apply). Focus = interview item → mission → offer(s). A mission without
+  an offer (inbound recruiter) has no focus in v1.
+- prepComplete = 2048 tokens, askModel 60 s → generation must be split per skill group.
+- The duet-ios backend (own store, own Claude tools) does not call OpenDuet today; OpenDuet's agent tools are not the
+  phone chat. The draft's "numbers must come from bullets" check is unsound (same reasons as A3b).
+
+### Decisions
+1. Chat quiz: v1 = HTTP routes only. Later the duet-ios session adds tools `reviser` (GET today) and `noter_fiche`
+   (POST review). Wassim grades himself (again/hard/good); LLM grading of free answers is out of v1.
+2. One table `openduet_revision_cards` (card + review state), no review log.
+3. Story cards: LLM returns `{question, theme, bulletIds[1–3]}` only; the answer is built by code from the cited
+   bullets verbatim + role/company/dates (Wassim, 2026-11-01: verbatim, no LLM STAR prose).
+4. Pitch: one card built by code, FR, "Présentez-vous en 2 minutes" = profiles[0] + one line per experience.
+5. Concept cards: general knowledge, FR: question, answer ≤120 words, keyPoints 2–4 ×≤120, topic ≤60; zod per card.
+6. dedup_key = sha256(concept|normalize(topic)) | (story|sorted bulletIds) | pitch; UNIQUE (owner, dedup_key), on
+   conflict do nothing; prompts get the existing topics ("do not repeat").
+7. Cost: whole master = 1 call per skill group with < 4 concept cards (≤5 cards, ≤8 calls) + 1 story call + pitch
+   (no call) → ≤9 calls. `POST /revision/generate` runs in background with an in-process single-flight per owner →
+   202 {started} | 409 generation_in_progress; `GET /revision/status` {running, lastError, counts}; reruns fill gaps.
+   Per offer: `POST /offers/:id/revision` 1 inline call (offer skills covered + missing, ≤8 concept cards, offer_id
+   set, 60 s); existing → returned unless ?regenerate=1; no master → 409 no_master. Offer text fenced.
+8. Leitner (revision/leitner.ts, pure) `nextReview(box, grade, now)`: new = box 1, due null; again → 1, hard → same,
+   good → min(box+1, 5); interval 1/2/4/8/16 days; due_at = parisDayAt(now, days, 0). Due today = due_at <
+   parisDayAt(now, 1, 0).
+9. Review = optimistic: UPDATE … WHERE id AND owner AND review_count = read AND archived_at IS NULL RETURNING;
+   0 rows → 409 review_conflict.
+10. `GET /revision/today?limit=1..20` (5): (a) focus cards due/new (offers whose mission has an active interview in
+    [now, now+3 d]), (b) due by due_at, (c) new by created_at; archived excluded; `{cards, focus:[{offerId, company,
+    interviewAt}]}`; story cards stale when master_hash ≠ current.
+11. Routes `/api/openduet/revision` (createRevisionRoutes): GET /cards?kind=&topic=&limit≤100, POST /cards/:id/review
+    {grade} (archived → 409), POST /cards/:id/archive (idempotent), generate, status, today. Offer route via
+    optional deps.revision in createOfferRoutes, before /:id.
+12. Brief `BriefRevision {dueToday, newCount, focus?: {company, skills[≤3]}}` via deps.revision?; failure →
+    couldNotCheck "Révision"; loadBriefRevision in wiring.ts; nothing when the deck is empty.
+13. Migration 0074 `bun run db:generate --name openduet_revision`, schema in drizzle.config.ts, migrate dev + test.
+14. Columns: id, owner → users cascade, kind concept|story|pitch, topic, skill_group_id null, offer_id → offers set
+    null, question, answer, key_points jsonb [], bullet_ids text[] {}, master_hash, dedup_key, box int 1 (1–5),
+    due_at null, review_count 0 (≥0), last_grade null (again|hard|good), last_reviewed_at, archived_at, timestamps.
+    CHECK story ⇒ cardinality(bullet_ids) ≥ 1. Index (owner, archived_at, due_at).
+
+### Batches (TDD, Sonnet)
+- B1 schema + leitner + store (insertCards, listToday, list, get, review, archive, countDue, topicsFor): tests
+  openduet-revision-leitner (grades × boxes, cap, DST 2026-03-29 / 10-25, Paris-midnight boundary),
+  openduet-revision-schema (CHECKs), openduet-revision-store.integration (idempotent insert, parallel review one
+  winner, archived excluded, owner, cascades, today ordering with focus ids).
+- B2 revision/cards.ts + generate.ts: tests openduet-revision-cards (bad card dropped, bullet ids filtered, verbatim
+  answer, fence, topic normalize, pitch), openduet-revision-generate (fake complete: ≤9 calls, rerun 0, full group
+  skipped, throw → lastError, single-flight).
+- B3 routes + offer hook + app/index + brief/wiring + offer store listByMissionIds: tests
+  openduet-revision-routes.integration (404, no_master, 202/409, review conflict, archived 409, interview in 2 d →
+  focus first, 5 d → none) + brief tests.
+
+### Risks
+Concept answers unchecked (archive wrong ones) · background job lost on restart (rerun fills gaps) · topic
+near-duplicates · no phone quiz until duet-ios adds the tools · concept text to the same provider.
