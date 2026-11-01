@@ -1,6 +1,7 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
 import type { AppVariables } from "../../auth/guards";
+import type { PrepStore } from "./prep-store";
 import { REVIEWS, STAGES } from "./stages";
 import {
   IllegalTransitionError,
@@ -41,6 +42,8 @@ const relanceBody = z.object({ status: z.enum(["sent", "dismissed"]) }).strict()
 export function createMissionRoutes(
   store: MissionStore,
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
+  /** Interview prep sheets. Absent, `/:id/preps` is not served. */
+  preps?: PrepStore,
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
   routes.use("*", requireUser);
@@ -74,6 +77,22 @@ export function createMissionRoutes(
     const relances = await store.listRelances(owner, { missionId: mission.id });
     return context.json({ mission, relances });
   });
+
+  if (preps) {
+    routes.get("/:id/preps", async (context) => {
+      const owner = context.var.actor.id;
+      const mission = await store.get(owner, context.req.param("id"));
+      const rows = await preps.listByMission(owner, mission.id);
+      return context.json({
+        preps: rows.map((r) => ({
+          itemId: r.itemId,
+          status: r.status,
+          content: r.content,
+          generatedAt: r.generatedAt,
+        })),
+      });
+    });
+  }
 
   routes.patch("/:id", async (context) => {
     const body = patchBody.safeParse(await context.req.json().catch(() => null));

@@ -24,6 +24,7 @@ import {
 
 /** Declared with the frame that asks for it (shared/morning-brief.ts), which names it to the model. */
 export const BRIEF_TOOL = MORNING_BRIEF_TOOL;
+export const GMAIL_READ = "google-workspace/gmail_read_message";
 export const GMAIL_SEARCH = "google-workspace/gmail_search_messages";
 export const CALENDAR_LIST = "google-workspace/calendar_list_events";
 
@@ -54,6 +55,15 @@ export type BriefMission = {
   relanceReady: boolean;
 };
 
+/** An interview tomorrow (Paris), with its preparation sheet when one exists. */
+export type BriefInterview = {
+  itemId: string;
+  title: string;
+  dueAt: string;
+  missionId: string | null;
+  prep: { status: string; content: unknown } | null;
+};
+
 export type MorningBrief = {
   /** ISO 8601, when the brief was made. */
   at: string;
@@ -64,6 +74,8 @@ export type MorningBrief = {
   calendar: BriefEvent[];
   /** Open active missions; empty when none, or when they could not be read (see couldNotCheck). */
   missions: BriefMission[];
+  /** Tomorrow's interviews; empty when none, or when they could not be read (see couldNotCheck). */
+  interviews: BriefInterview[];
   /** Each source that could not be read, and why, in words the person can act on. */
   couldNotCheck: { source: string; why: string }[];
   checked: { mail: number; byRules: number; byModel: number };
@@ -189,6 +201,8 @@ export async function buildMorningBrief(
     now?: () => Date;
     /** Reads this person's missions. Absent, the brief has no missions section. */
     missions?: (ownerUserId: string) => Promise<BriefMission[]>;
+    /** Reads this person's interviews tomorrow. Absent, the brief has no interviews section. */
+    interviews?: (ownerUserId: string) => Promise<BriefInterview[]>;
   },
   input: {
     actorId: string;
@@ -215,6 +229,7 @@ export async function buildMorningBrief(
     canWait: [],
     calendar: [],
     missions: [],
+    interviews: [],
     couldNotCheck,
     checked: { mail: 0, byRules: 0, byModel: 0 },
   };
@@ -327,6 +342,13 @@ export async function buildMorningBrief(
       brief.missions = await deps.missions(input.actorId);
     } catch (error) {
       couldNotCheck.push({ source: "Missions", why: why(error) });
+    }
+  }
+  if (deps.interviews) {
+    try {
+      brief.interviews = await deps.interviews(input.actorId);
+    } catch (error) {
+      couldNotCheck.push({ source: "Entretiens", why: why(error) });
     }
   }
   return brief;

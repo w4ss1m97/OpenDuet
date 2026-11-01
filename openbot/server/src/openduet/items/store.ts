@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, getTableColumns, gte, inArray, sql, type SQL } from "drizzle-orm";
+import { and, eq, getTableColumns, gte, inArray, lt, sql, type SQL } from "drizzle-orm";
 import type { Database } from "../../db/client";
 import {
   type OpenduetItem,
@@ -14,6 +14,14 @@ export class ItemNotFoundError extends Error {
   constructor(id: string) {
     super(`Item ${id} not found`);
     this.name = "ItemNotFoundError";
+  }
+}
+
+/** Only an interview or a follow-up can be tied to a mission. */
+export class ItemKindError extends Error {
+  constructor(id: string) {
+    super(`Item ${id} cannot be tied to a mission`);
+    this.name = "ItemKindError";
   }
 }
 
@@ -74,17 +82,50 @@ export function createItemStore(db: Database) {
     },
 
     /** Ties the item read from this source to its mission, once: an item already tied keeps its mission. */
-    async linkMission(ownerUserId: string, sourceHash: string, missionId: string): Promise<void> {
+    /** Ties an unlinked item to a mission; returns the mission the item is tied to now (an earlier link wins). */
+    async linkMission(ownerUserId: string, sourceHash: string, missionId: string): Promise<string | null> {
+      const bySource = and(eq(openduetItems.ownerUserId, ownerUserId), eq(openduetItems.sourceHash, sourceHash));
       await db
         .update(openduetItems)
         .set({ missionId, updatedAt: new Date() })
+        .where(and(bySource, sql`${openduetItems.missionId} IS NULL`));
+      const [row] = await db.select({ missionId: openduetItems.missionId }).from(openduetItems).where(bySource);
+      return row?.missionId ?? null;
+    },
+
+    async get(ownerUserId: string, id: string): Promise<OpenduetItem> {
+      const [row] = await db
+        .select()
+        .from(openduetItems)
+        .where(and(eq(openduetItems.id, id), eq(openduetItems.ownerUserId, ownerUserId)));
+      if (!row) throw new ItemNotFoundError(id);
+      return row;
+    },
+
+    /** Ties the item to a mission, or unties it with null, whatever it was tied to before. */
+    async setMission(ownerUserId: string, id: string, missionId: string | null): Promise<OpenduetItem> {
+      if (missionId !== null) {
+        const item = await this.get(ownerUserId, id);
+        if (item.kind !== "interview" && item.kind !== "followup") throw new ItemKindError(id);
+      }
+      return updateOwned(ownerUserId, id, { missionId });
+    },
+
+    /** Active interviews due from `from` (included) to `to` (excluded), soonest first. */
+    async listUpcomingInterviews(ownerUserId: string, from: Date, to: Date): Promise<OpenduetItem[]> {
+      return db
+        .select()
+        .from(openduetItems)
         .where(
           and(
             eq(openduetItems.ownerUserId, ownerUserId),
-            eq(openduetItems.sourceHash, sourceHash),
-            sql`${openduetItems.missionId} IS NULL`,
+            eq(openduetItems.kind, "interview"),
+            eq(openduetItems.status, "active"),
+            gte(openduetItems.dueAt, from),
+            lt(openduetItems.dueAt, to),
           ),
-        );
+        )
+        .orderBy(openduetItems.dueAt);
     },
 
     async list(ownerUserId: string, q: ItemQuery = {}): Promise<OpenduetItem[]> {

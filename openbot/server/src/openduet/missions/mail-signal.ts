@@ -57,3 +57,27 @@ export function contactOf(from: string): string | null {
   if (/^(?:no-?reply|donotreply|do-not-reply|notifications?|mailer-daemon)@/.test(address)) return null;
   return address;
 }
+
+/** Names that stand for a platform, never for the company behind an offer. */
+export const PLATFORM_KEYS = new Set(["malt", "freework", "collective", "linkedin"]);
+const MAX_RUN_WORDS = 5;
+
+/** Whether the words of `text`, run together, spell the company key as whole words. */
+export function namesCompany(text: string, key: string): boolean {
+  if (key.length < 3 || PLATFORM_KEYS.has(key)) return false;
+  const words = text
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  for (let start = 0; start < words.length; start += 1) {
+    let run = "";
+    for (let end = start; end < Math.min(words.length, start + MAX_RUN_WORDS); end += 1) {
+      run += words[end];
+      if (run === key) return true;
+      if (run.length >= key.length) break;
+    }
+  }
+  return false;
+}

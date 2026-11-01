@@ -11,6 +11,10 @@ import type { RuntimeModel } from "../copilot";
 export function createModelCompleter(deps: {
   model: RuntimeModel;
   resolveApiKey: () => Promise<string | null>;
+  /** Longest answer, Anthropic only. 1024 by default. */
+  maxTokens?: number;
+  /** How long one call may take. 10 s by default, enough for a routing answer, not for a long one. */
+  timeoutMs?: number;
 }): (prompt: string, signal?: AbortSignal) => Promise<string> {
   return async (prompt: string, signal?: AbortSignal) => {
     signal?.throwIfAborted();
@@ -47,13 +51,13 @@ export function createModelCompleter(deps: {
            * and the confidence floor still sends an unsure match to the default.
            */
           ...(anthropic
-            ? { max_tokens: 1024 }
+            ? { max_tokens: deps.maxTokens ?? 1024 }
             : { response_format: { type: "json_object" } }),
           messages: [{ role: "user", content: prompt }],
         }),
         signal: signal
-          ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
-          : AbortSignal.timeout(10_000),
+          ? AbortSignal.any([signal, AbortSignal.timeout(deps.timeoutMs ?? 10_000)])
+          : AbortSignal.timeout(deps.timeoutMs ?? 10_000),
       },
     );
     if (!response.ok)
