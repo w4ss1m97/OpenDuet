@@ -1,5 +1,8 @@
 import { Hono } from "hono";
+import type { Complete } from "../triage";
 import { type CockpitService, createCockpitService } from "./collect";
+import { type ExplainService, createExplainService } from "./explain";
+import { type ExploreService, createExploreService } from "./explore";
 
 /** What Bun tells us about the peer; the listener passes it in, a test can pass its own. */
 type Bindings = { ip?: { address: string } | null };
@@ -10,15 +13,22 @@ export type CockpitAppOptions = {
   /** Origins whose pages may read the answers: the app's own, plus the desktop shell's. */
   origins: ReadonlySet<string>;
   service: CockpitService;
+  /** Facts about a project's committed tree; without it the explore and explain routes answer 404. */
+  explore?: ExploreService;
+  /** The model explanation; without it the POST answers 503. */
+  explain?: ExplainService;
 };
 
 const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+const EXPLAIN_POST = /^\/api\/cockpit\/projects\/[^/]+\/explain$/;
+const HEAD_SHA = /^[0-9a-f]{40}$/;
 
 /**
  * The cockpit's own Hono app. It never joins the main app, whose /api is reachable from the LAN and
  * from the app's proxy at 127.0.0.1; here every request must come from this machine, name this
  * machine in `Host` (DNS rebinding), and, when it is a page, come from one of the allowed origins.
- * GET only.
+ * GET only, except one POST (generate an explanation, which costs tokens): that one must come from an
+ * allowed page Origin and carry no body, so it is a simple request that never needs a preflight.
  */
 export function createCockpitApp(options: CockpitAppOptions) {
   const app = new Hono<{ Bindings: Bindings }>();
@@ -31,10 +41,12 @@ export function createCockpitApp(options: CockpitAppOptions) {
     if (!peer || !LOOPBACK.has(peer)) return c.json({ error: "forbidden" }, 403);
     const origin = c.req.header("origin");
     if (origin !== undefined && !options.origins.has(origin)) return c.json({ error: "forbidden" }, 403);
-    if (c.req.method !== "GET") {
-      c.header("Allow", "GET");
+    const explainPost = c.req.method === "POST" && EXPLAIN_POST.test(c.req.path);
+    if (c.req.method !== "GET" && !explainPost) {
+      c.header("Allow", EXPLAIN_POST.test(c.req.path) ? "GET, POST" : "GET");
       return c.json({ error: "method not allowed" }, 405);
     }
+    if (explainPost && origin === undefined) return c.json({ error: "forbidden" }, 403);
     c.header("Cache-Control", "no-store");
     if (origin !== undefined) {
       c.header("Access-Control-Allow-Origin", origin);
@@ -50,25 +62,73 @@ export function createCockpitApp(options: CockpitAppOptions) {
     return found ? c.json(found) : c.json({ error: "not found" }, 404);
   });
 
+  app.get("/api/cockpit/projects/:name/explore", async (c) => {
+    const found = await options.explore?.explore(c.req.param("name"));
+    return found ? c.json(found.facts) : c.json({ error: "not found" }, 404);
+  });
+
+  app.get("/api/cockpit/projects/:name/explain", async (c) => {
+    const found = await options.explore?.explore(c.req.param("name"));
+    if (!found) return c.json({ error: "not found" }, 404);
+    if (!options.explain) return c.json({ error: "unavailable" }, 503);
+    return c.json(await options.explain.status(found));
+  });
+
+  app.post("/api/cockpit/projects/:name/explain", async (c) => {
+    const length = c.req.header("content-length");
+    if ((length !== undefined && length.trim() !== "0") || c.req.header("transfer-encoding") !== undefined) {
+      return c.json({ error: "no body allowed" }, 400);
+    }
+    const wanted = c.req.query("head");
+    if (wanted === undefined || !HEAD_SHA.test(wanted)) return c.json({ error: "head is required" }, 400);
+    const found = await options.explore?.explore(c.req.param("name"));
+    if (!found) return c.json({ error: "not found" }, 404);
+    if (found.facts.head !== wanted) return c.json({ error: "head changed", head: found.facts.head }, 409);
+    if (!options.explain) return c.json({ error: "unavailable" }, 503);
+    const outcome = await options.explain.generate(found, wanted);
+    switch (outcome.kind) {
+      case "ok":
+        return c.json(outcome.result);
+      case "busy":
+        return c.json({ error: "busy" }, 429);
+      case "rate":
+        c.header("Retry-After", String(outcome.retryAfterSeconds));
+        return c.json({ error: "too many explanations this hour" }, 429);
+      case "unavailable":
+        return c.json({ error: "unavailable" }, 503);
+      default:
+        return c.json({ error: "the model could not explain this project" }, 502);
+    }
+  });
+
   app.notFound((c) => c.json({ error: "not found" }, 404));
   return app;
 }
+
+/** Seconds a connection may stay silent: longer than the 120 s model call, within Bun's 255 s cap. */
+export const COCKPIT_IDLE_TIMEOUT_S = 150;
 
 /** Starts the cockpit on 127.0.0.1 only, whatever OPENBOT_HOST says. */
 export function startCockpitServer(options: {
   port: number;
   origins: ReadonlySet<string>;
   service?: CockpitService;
+  explore?: ExploreService;
+  /** The model that explains projects; without a completer the explain POST answers 503. */
+  explain?: { complete?: Complete; dir?: string };
 }) {
   let bound = options.port;
   const app = createCockpitApp({
     getPort: () => bound,
     origins: options.origins,
     service: options.service ?? createCockpitService(),
+    explore: options.explore ?? createExploreService(),
+    explain: createExplainService({ complete: options.explain?.complete, dir: options.explain?.dir }),
   });
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: options.port,
+    idleTimeout: COCKPIT_IDLE_TIMEOUT_S,
     fetch: (request, srv) => app.fetch(request, { ip: srv.requestIP(request) }),
   });
   bound = server.port ?? options.port;

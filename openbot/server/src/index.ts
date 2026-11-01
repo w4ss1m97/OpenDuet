@@ -2308,21 +2308,6 @@ const intakeHost =
   process.env.OPENDUET_LOCAL_SOURCES === "1" && process.platform === "darwin"
     ? localHostRunner()
     : null;
-/*
- * Cockpit (openduet/cockpit): the projects dashboard, on its own 127.0.0.1 listener and never on the
- * main app. Read from this Mac's disk and gh, so only where OPENDUET_COCKPIT=1 on macOS.
- */
-if (process.platform === "darwin" && process.env.OPENDUET_COCKPIT === "1") {
-  const cockpitPort = Number(process.env.OPENDUET_COCKPIT_PORT ?? 3002);
-  if (Number.isInteger(cockpitPort) && cockpitPort > 0 && cockpitPort < 65536) {
-    startCockpitServer({
-      port: cockpitPort,
-      origins: new Set([...appOrigins(config).origins, "tauri://localhost"]),
-    });
-  } else {
-    console.error(JSON.stringify({ type: "openduet-cockpit-bad-port", port: process.env.OPENDUET_COCKPIT_PORT }));
-  }
-}
 const intakeProjects = (() => {
   try {
     return loadProjects(config.tenantPackageDirectory);
@@ -2368,6 +2353,22 @@ const listComplete = createModelCompleter({
       environment: process.env,
     }),
 });
+/*
+ * Cockpit (openduet/cockpit): the projects dashboard, on its own 127.0.0.1 listener and never on the
+ * main app. Read from this Mac's disk and gh, so only where OPENDUET_COCKPIT=1 on macOS.
+ */
+if (process.platform === "darwin" && process.env.OPENDUET_COCKPIT === "1") {
+  const cockpitPort = Number(process.env.OPENDUET_COCKPIT_PORT ?? 3002);
+  if (Number.isInteger(cockpitPort) && cockpitPort > 0 && cockpitPort < 65536) {
+    startCockpitServer({
+      port: cockpitPort,
+      origins: new Set([...appOrigins(config).origins, "tauri://localhost"]),
+      explain: { complete: listComplete },
+    });
+  } else {
+    console.error(JSON.stringify({ type: "openduet-cockpit-bad-port", port: process.env.OPENDUET_COCKPIT_PORT }));
+  }
+}
 const cvDeps = { store: cvStore, render: createPdfRenderer(process.env.OPENDUET_CHROME_BIN), complete: prepComplete };
 const revisionStore = createRevisionStore(database);
 // 120 s per model call; the whole-master fill runs in the background (at most 9 calls).

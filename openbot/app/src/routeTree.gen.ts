@@ -87,6 +87,7 @@ import { Route as AuthedAppBotsAgentIdSetupRouteImport } from './routes/_authed/
 import { Route as AuthedAppBotsAgentIdSharingRouteImport } from './routes/_authed/_app/bots.$agentId.sharing'
 import { Route as AuthedAppCockpitProjectsNameRouteImport } from './routes/_authed/_app/cockpit.projects_.$name'
 import { Route as AuthedAppTasksQuestionsQuestionIdRouteImport } from './routes/_authed/_app/tasks.questions.$questionId'
+import { Route as AuthedAppCockpitProjectsNameExploreRouteImport } from './routes/_authed/_app/cockpit.projects_.$name_.explore'
 import { Route as AuthedAdminPluginsKeyBotsAgentIdRouteImport } from './routes/_authed/admin/plugins/$key_.bots.$agentId'
 import { Route as AuthedAdminPluginsKeyToolsToolRouteImport } from './routes/_authed/admin/plugins/$key_.tools.$tool'
 
@@ -507,6 +508,12 @@ const AuthedAppTasksQuestionsQuestionIdRoute =
     path: '/questions/$questionId',
     getParentRoute: () => AuthedAppTasksRoute,
   } as any)
+const AuthedAppCockpitProjectsNameExploreRoute =
+  AuthedAppCockpitProjectsNameExploreRouteImport.update({
+    id: '/cockpit/projects_/$name_/explore',
+    path: '/cockpit/projects/$name/explore',
+    getParentRoute: () => AuthedAppRoute,
+  } as any)
 const AuthedAdminPluginsKeyBotsAgentIdRoute =
   AuthedAdminPluginsKeyBotsAgentIdRouteImport.update({
     id: '/plugins/$key_/bots/$agentId',
@@ -597,6 +604,7 @@ export interface FileRoutesByFullPath {
   '/cockpit/projects/$name': typeof AuthedAppCockpitProjectsNameRoute
   '/tasks/questions/$questionId': typeof AuthedAppTasksQuestionsQuestionIdRoute
   '/bots/$agentId/': typeof AuthedAppBotsAgentIdIndexRoute
+  '/cockpit/projects/$name/explore': typeof AuthedAppCockpitProjectsNameExploreRoute
   '/admin/plugins/$key/bots/$agentId': typeof AuthedAdminPluginsKeyBotsAgentIdRoute
   '/admin/plugins/$key/tools/$tool': typeof AuthedAdminPluginsKeyToolsToolRoute
 }
@@ -674,6 +682,7 @@ export interface FileRoutesByTo {
   '/cockpit/projects/$name': typeof AuthedAppCockpitProjectsNameRoute
   '/tasks/questions/$questionId': typeof AuthedAppTasksQuestionsQuestionIdRoute
   '/bots/$agentId': typeof AuthedAppBotsAgentIdIndexRoute
+  '/cockpit/projects/$name/explore': typeof AuthedAppCockpitProjectsNameExploreRoute
   '/admin/plugins/$key/bots/$agentId': typeof AuthedAdminPluginsKeyBotsAgentIdRoute
   '/admin/plugins/$key/tools/$tool': typeof AuthedAdminPluginsKeyToolsToolRoute
 }
@@ -757,6 +766,7 @@ export interface FileRoutesById {
   '/_authed/_app/cockpit/projects_/$name': typeof AuthedAppCockpitProjectsNameRoute
   '/_authed/_app/tasks/questions/$questionId': typeof AuthedAppTasksQuestionsQuestionIdRoute
   '/_authed/_app/bots/$agentId/': typeof AuthedAppBotsAgentIdIndexRoute
+  '/_authed/_app/cockpit/projects_/$name_/explore': typeof AuthedAppCockpitProjectsNameExploreRoute
   '/_authed/admin/plugins/$key_/bots/$agentId': typeof AuthedAdminPluginsKeyBotsAgentIdRoute
   '/_authed/admin/plugins/$key_/tools/$tool': typeof AuthedAdminPluginsKeyToolsToolRoute
 }
@@ -839,6 +849,7 @@ export interface FileRouteTypes {
     | '/cockpit/projects/$name'
     | '/tasks/questions/$questionId'
     | '/bots/$agentId/'
+    | '/cockpit/projects/$name/explore'
     | '/admin/plugins/$key/bots/$agentId'
     | '/admin/plugins/$key/tools/$tool'
   fileRoutesByTo: FileRoutesByTo
@@ -916,6 +927,7 @@ export interface FileRouteTypes {
     | '/cockpit/projects/$name'
     | '/tasks/questions/$questionId'
     | '/bots/$agentId'
+    | '/cockpit/projects/$name/explore'
     | '/admin/plugins/$key/bots/$agentId'
     | '/admin/plugins/$key/tools/$tool'
   id:
@@ -998,6 +1010,7 @@ export interface FileRouteTypes {
     | '/_authed/_app/cockpit/projects_/$name'
     | '/_authed/_app/tasks/questions/$questionId'
     | '/_authed/_app/bots/$agentId/'
+    | '/_authed/_app/cockpit/projects_/$name_/explore'
     | '/_authed/admin/plugins/$key_/bots/$agentId'
     | '/_authed/admin/plugins/$key_/tools/$tool'
   fileRoutesById: FileRoutesById
@@ -1555,6 +1568,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedAppTasksQuestionsQuestionIdRouteImport
       parentRoute: typeof AuthedAppTasksRoute
     }
+    '/_authed/_app/cockpit/projects_/$name_/explore': {
+      id: '/_authed/_app/cockpit/projects_/$name_/explore'
+      path: '/cockpit/projects/$name/explore'
+      fullPath: '/cockpit/projects/$name/explore'
+      preLoaderRoute: typeof AuthedAppCockpitProjectsNameExploreRouteImport
+      parentRoute: typeof AuthedAppRoute
+    }
     '/_authed/admin/plugins/$key_/bots/$agentId': {
       id: '/_authed/admin/plugins/$key_/bots/$agentId'
       path: '/plugins/$key/bots/$agentId'
@@ -1736,6 +1756,7 @@ interface AuthedAppRouteChildren {
   AuthedAppBotsAgentIdSharingRoute: typeof AuthedAppBotsAgentIdSharingRoute
   AuthedAppCockpitProjectsNameRoute: typeof AuthedAppCockpitProjectsNameRoute
   AuthedAppBotsAgentIdIndexRoute: typeof AuthedAppBotsAgentIdIndexRoute
+  AuthedAppCockpitProjectsNameExploreRoute: typeof AuthedAppCockpitProjectsNameExploreRoute
 }
 
 const AuthedAppRouteChildren: AuthedAppRouteChildren = {
@@ -1777,6 +1798,8 @@ const AuthedAppRouteChildren: AuthedAppRouteChildren = {
   AuthedAppBotsAgentIdSharingRoute: AuthedAppBotsAgentIdSharingRoute,
   AuthedAppCockpitProjectsNameRoute: AuthedAppCockpitProjectsNameRoute,
   AuthedAppBotsAgentIdIndexRoute: AuthedAppBotsAgentIdIndexRoute,
+  AuthedAppCockpitProjectsNameExploreRoute:
+    AuthedAppCockpitProjectsNameExploreRoute,
 }
 
 const AuthedAppRouteWithChildren = AuthedAppRoute._addFileChildren(
