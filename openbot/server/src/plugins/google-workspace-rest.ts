@@ -22,9 +22,11 @@ import type { McpCallResult, McpTool } from "./mcp";
  * events, header values cut at {@link HEADER_MAX_CHARS}, and a message body cut at
  * {@link BODY_MAX_CHARS} with a marker saying so.
  *
- * ONE WRITE. `gmail_send_reply` sends mail as the person, so the catalogue names it a write and the
+ * TWO WRITES. `gmail_send_reply` sends mail as the person, so the catalogue names it a write and the
  * approval gate looks at every call before it reaches this module. It replies within an existing
  * thread only: there is no tool here that writes to somebody who has not written first.
+ * `gmail_create_draft` sends nothing: it files a message in the person's Drafts, for them to read and
+ * send themselves. It is a write all the same (it changes the mailbox), and goes through the same gate.
  */
 
 /** Long enough for a slow mailbox, short enough that a Bot's turn is not held open on it. */
@@ -42,6 +44,10 @@ const MAX_RESULTS = 50;
 
 /** The longest body a result carries, marker included. */
 const BODY_MAX_CHARS = 20_000;
+const DRAFT_BODY_MAX_CHARS = 20_000;
+/** A draft carries one PDF, small enough that a base64 JSON body stays well under Gmail's limit. */
+const DRAFT_ATTACHMENT_MAX_BYTES = 2 * 1024 * 1024;
+const DRAFT_FILENAME = /^[A-Za-z0-9._-]{1,100}$/;
 const BODY_CUT_MARKER = "\n\n[truncated: the message is longer than this]";
 
 /**
@@ -157,6 +163,45 @@ const TOOLS: readonly McpTool[] = Object.freeze([
         body: { type: "string", description: "The reply, as plain text." },
       },
       required: ["threadId", "inReplyTo", "to", "subject", "body"],
+    },
+  },
+  {
+    name: "gmail_create_draft",
+    description:
+      "Create a Gmail draft, as you. It is NOT sent: it waits in your Drafts for you to read and send. With a threadId it is a reply under the last message of that thread. A PDF can be attached. Returns JSON.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        to: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            'Recipients, each "Name <address>" or a bare address. May be empty.',
+        },
+        cc: {
+          type: "array",
+          items: { type: "string" },
+          description: "Copied recipients, in the same form.",
+        },
+        subject: { type: "string", description: "The subject." },
+        body: { type: "string", description: "The message, as plain text." },
+        threadId: {
+          type: "string",
+          description:
+            'A Gmail thread id. The draft is filed under its last message and "Re: " is added to the subject.',
+        },
+        attachment: {
+          type: "object",
+          description: "One PDF to attach.",
+          properties: {
+            filename: { type: "string" },
+            mimeType: { type: "string", enum: ["application/pdf"] },
+            contentBase64: { type: "string" },
+          },
+          required: ["filename", "mimeType", "contentBase64"],
+        },
+      },
+      required: ["subject", "body"],
     },
   },
   {
@@ -745,9 +790,13 @@ function formatAddress(address: string): string {
   return name ? `${encodeWords(name)} <${match[2]}>` : `<${match[2]}>`;
 }
 
-/** Text as base64 in lines of 76, which is what RFC 2045 allows a base64 body. */
-function base64Lines(text: string): string {
-  const encoded = Buffer.from(text, "utf8").toString("base64");
+/** Text (or bytes) as base64 in lines of 76, which is what RFC 2045 allows a base64 body. */
+function base64Lines(content: string | Uint8Array): string {
+  const bytes =
+    typeof content === "string"
+      ? Buffer.from(content, "utf8")
+      : Buffer.from(content);
+  const encoded = bytes.toString("base64");
   return encoded.match(/.{1,76}/g)?.join("\r\n") ?? "";
 }
 
@@ -790,33 +839,115 @@ function replyMessage(input: {
   parentReferences?: string;
   parentInReplyTo?: string;
 }): string {
-  const chain = (input.parentReferences ?? input.parentInReplyTo ?? "").trim();
+  const lines = [
+    ...addressLines(input.to, input.cc),
+    `Subject: ${encodeWords(withRe(input.subject))}`,
+    ...threadLines({
+      messageId: input.parentMessageId,
+      references: input.parentReferences,
+      inReplyTo: input.parentInReplyTo,
+    }),
+    "MIME-Version: 1.0",
+    ...textPart(input.body),
+  ];
+  return lines.join("\r\n");
+}
+
+/** "Re: " in front of a subject, unless it already starts with one. */
+function withRe(subject: string): string {
+  return /^re:/i.test(subject.trim()) ? subject.trim() : `Re: ${subject.trim()}`;
+}
+
+/** The To and Cc headers, each only when it has someone in it. */
+function addressLines(
+  to: readonly string[],
+  cc: readonly string[],
+): string[] {
+  return [
+    ...(to.length > 0 ? [`To: ${to.map(formatAddress).join(", ")}`] : []),
+    ...(cc.length > 0 ? [`Cc: ${cc.map(formatAddress).join(", ")}`] : []),
+  ];
+}
+
+/**
+ * The two headers that file a message under its parent. `References` is the parent's chain with the
+ * parent's id added, falling back to the parent's `In-Reply-To` when it carries no chain.
+ */
+function threadLines(parent: {
+  messageId: string;
+  references?: string;
+  inReplyTo?: string;
+}): string[] {
+  const chain = (parent.references ?? parent.inReplyTo ?? "").trim();
   // Split on whitespace, which takes every line break with it; a NUL is the one break that is not
   // whitespace, so an id carrying one is dropped rather than written into a header.
   const references = foldIds(
-    `${chain} ${input.parentMessageId}`
+    `${chain} ${parent.messageId}`
       .trim()
       .split(/\s+/)
       .filter((id) => !HEADER_BREAK.test(id)),
   );
-  const subject = /^re:/i.test(input.subject.trim())
-    ? input.subject.trim()
-    : `Re: ${input.subject.trim()}`;
-  const lines = [
-    `To: ${input.to.map(formatAddress).join(", ")}`,
-    ...(input.cc.length > 0
-      ? [`Cc: ${input.cc.map(formatAddress).join(", ")}`]
-      : []),
-    `Subject: ${encodeWords(subject)}`,
-    `In-Reply-To: ${input.parentMessageId}`,
-    `References: ${references}`,
-    "MIME-Version: 1.0",
+  return [`In-Reply-To: ${parent.messageId}`, `References: ${references}`];
+}
+
+/** The content headers and base64 body of a plain-text part, lines CRLF-joined. */
+function textPart(body: string): string[] {
+  return [
     "Content-Type: text/plain; charset=UTF-8",
     "Content-Transfer-Encoding: base64",
     "",
-    base64Lines(input.body.replace(/\r?\n/g, "\r\n")),
+    base64Lines(body.replace(/\r?\n/g, "\r\n")),
   ];
-  return lines.join("\r\n");
+}
+
+/**
+ * A draft as an RFC 5322 message, ready to be base64url-encoded for `drafts.create`.
+ *
+ * Headers are built the way {@link replyMessage}'s are. With a `parent` it is threaded under it and
+ * "Re: " is added; without one it is a fresh message. With an attachment it is multipart/mixed: the
+ * text part, then the file, whose boundary is a fresh `duet-<uuid>` checked against both parts. An
+ * empty `to` writes no To header at all, since an empty one is not valid.
+ */
+export function draftMessage(input: {
+  to: readonly string[];
+  cc: readonly string[];
+  subject: string;
+  body: string;
+  parent?: { messageId: string; references?: string; inReplyTo?: string };
+  attachment?: { filename: string; mimeType: string; contentBase64: string };
+}): string {
+  const head = [
+    ...addressLines(input.to, input.cc),
+    `Subject: ${encodeWords(input.parent ? withRe(input.subject) : input.subject.trim())}`,
+    ...(input.parent ? threadLines(input.parent) : []),
+    "MIME-Version: 1.0",
+  ];
+  const attachment = input.attachment;
+  if (!attachment) return [...head, ...textPart(input.body)].join("\r\n");
+
+  const text = textPart(input.body).join("\r\n");
+  const file = [
+    `Content-Type: ${attachment.mimeType}; name="${attachment.filename}"`,
+    `Content-Disposition: attachment; filename="${attachment.filename}"`,
+    "Content-Transfer-Encoding: base64",
+    "",
+    base64Lines(Buffer.from(attachment.contentBase64, "base64")),
+  ].join("\r\n");
+  let boundary = `duet-${crypto.randomUUID()}`;
+  while (text.includes(boundary) || file.includes(boundary)) {
+    boundary = `duet-${crypto.randomUUID()}`;
+  }
+  return [
+    ...head,
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
+    text,
+    `--${boundary}`,
+    file,
+    `--${boundary}--`,
+    "",
+  ].join("\r\n");
 }
 
 const failure = (message: string): McpCallResult => ({
@@ -1070,6 +1201,129 @@ export async function callTool(
       sent: true,
       id: sent.value.id ?? "",
       threadId: sent.value.threadId ?? threadId,
+    });
+  }
+
+  if (toolName === "gmail_create_draft") {
+    const subject = stringArg("subject");
+    const body = typeof args.body === "string" ? args.body : "";
+    const to = listArg("to");
+    const cc = listArg("cc");
+    const threadId = stringArg("threadId");
+    const given = args.attachment;
+
+    if (to === "invalid" || cc === "invalid") {
+      return failure("Recipients must be a list of addresses.");
+    }
+    if (!subject) return failure("A draft needs a subject.");
+    if (body.trim() === "") return failure("A draft needs something to say.");
+    if (body.length > DRAFT_BODY_MAX_CHARS) {
+      return failure(
+        `A draft body is at most ${DRAFT_BODY_MAX_CHARS} characters.`,
+      );
+    }
+
+    let attachment:
+      | { filename: string; mimeType: string; contentBase64: string }
+      | undefined;
+    if (given !== undefined && given !== null) {
+      const file = given as Record<string, unknown>;
+      if (typeof given !== "object" || Array.isArray(given)) {
+        return failure("The attachment must be an object.");
+      }
+      if (
+        typeof file.filename !== "string" ||
+        typeof file.contentBase64 !== "string"
+      ) {
+        return failure("An attachment needs a filename and its content.");
+      }
+      // Checked before the filename's characters, so a line break is named as the injection it is.
+      if (HEADER_BREAK.test(file.filename)) {
+        return failure(
+          "The attachment's filename contains a line break, which would add a header. The draft was not created.",
+        );
+      }
+      if (!DRAFT_FILENAME.test(file.filename)) {
+        return failure(
+          "The attachment's filename must be 1 to 100 letters, digits, dots, dashes or underscores.",
+        );
+      }
+      if (file.mimeType !== "application/pdf") {
+        return failure("Only a PDF can be attached.");
+      }
+      const content = file.contentBase64.replace(/\s+/g, "");
+      if (!/^[A-Za-z0-9+/]*={0,2}$/.test(content) || content.length % 4 !== 0) {
+        return failure("The attachment is not valid base64.");
+      }
+      if (Buffer.from(content, "base64").length > DRAFT_ATTACHMENT_MAX_BYTES) {
+        return failure("The attachment is larger than 2 MB.");
+      }
+      attachment = {
+        filename: file.filename,
+        mimeType: "application/pdf",
+        contentBase64: content,
+      };
+    }
+
+    // Refused rather than stripped, for the reason given at gmail_send_reply.
+    if ([...to, ...cc, subject].some((value) => HEADER_BREAK.test(value))) {
+      return failure(
+        "A recipient or the subject contains a line break, which would add a header nobody approved. The draft was not created.",
+      );
+    }
+    if (![...to, ...cc].every((address) => address.includes("@"))) {
+      return failure("Every recipient needs an email address.");
+    }
+
+    let parent:
+      | { messageId: string; references?: string; inReplyTo?: string }
+      | undefined;
+    if (threadId) {
+      const thread = await request<{ messages?: GmailMessage[] }>(
+        connection,
+        "Gmail",
+        `${GMAIL}/threads/${encodeURIComponent(threadId)}`,
+        {
+          query: {
+            format: "metadata",
+            metadataHeaders: ["Message-ID", "References", "In-Reply-To"],
+          },
+        },
+      );
+      if (!thread.ok) return failure(thread.message);
+      // Gmail lists a thread oldest first, so the last message is the one being answered.
+      const last = thread.value.messages?.at(-1);
+      const headers = last?.payload?.headers;
+      const messageId = headerOf(headers, "Message-ID")?.trim();
+      if (!messageId || HEADER_BREAK.test(messageId)) {
+        return failure(
+          "The thread has no message with a usable Message-ID, so a draft could not be threaded under it. The draft was not created.",
+        );
+      }
+      parent = {
+        messageId,
+        references: headerOf(headers, "References"),
+        inReplyTo: headerOf(headers, "In-Reply-To"),
+      };
+    }
+
+    const raw = Buffer.from(
+      draftMessage({ to, cc, subject, body, parent, attachment }),
+      "utf8",
+    ).toString("base64url");
+
+    const created = await request<{
+      id?: string;
+      message?: { id?: string; threadId?: string };
+    }>(connection, "Gmail", `${GMAIL}/drafts`, {
+      json: { message: { raw, ...(threadId ? { threadId } : {}) } },
+    });
+    if (!created.ok) return failure(created.message);
+    return asJson({
+      draft: true,
+      id: created.value.id ?? "",
+      messageId: created.value.message?.id ?? "",
+      threadId: created.value.message?.threadId ?? threadId ?? "",
     });
   }
 

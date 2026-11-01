@@ -31,6 +31,8 @@
  * WHAT A TEST OR A DEMO CAN ASK IT. Unauthenticated, test-only, and never anything Google has:
  *
  * - `GET /__fake/sent` lists what was sent, decoded.
+ * - `GET /__fake/drafts` lists the drafts created, decoded, with their attachments. A draft is never
+ *   in the mailbox, never in `sent`: `POST …/drafts` only stores it.
  * - `POST /__fake/reset` puts the mailbox and calendar back as they started, dated from now, and
  *   forgets what was sent. Issued tokens survive a reset, so a connected deployment stays connected.
  * - `POST /__fake/deliver` with JSON `{ "from": "Ana Ruiz <ana@example.com>", "subject": "…",
@@ -50,6 +52,7 @@ export const FAKE_ACCOUNT = "maya@marlowceramics.com";
 const DEFAULT_SCOPE = [
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.send",
+  "https://www.googleapis.com/auth/gmail.compose",
   "https://www.googleapis.com/auth/calendar.readonly",
 ].join(" ");
 
@@ -108,6 +111,13 @@ export type SentMessage = {
   body: string;
   inReplyTo: string | null;
   references: string | null;
+};
+
+/** A draft created through the fake, decoded, with the files it carries. */
+export type DraftMessage = SentMessage & {
+  /** The draft's own id; `id` is the message inside it. */
+  draftId: string;
+  attachments: { filename: string; mimeType: string; contentBase64: string }[];
 };
 
 type FakeEvent = {
@@ -686,6 +696,8 @@ export type FakeGoogle = {
   port: number;
   /** What has been sent, decoded. The same list `GET /__fake/sent` answers. */
   sent(): SentMessage[];
+  /** The drafts created, decoded. The same list `GET /__fake/drafts` answers. */
+  drafts(): DraftMessage[];
   /** The mailbox and calendar as they started, dated from now, and nothing sent. */
   reset(): void;
   stop(): Promise<void>;
@@ -710,11 +722,13 @@ export function startFakeGoogle(
   let messages: StoredMessage[] = [];
   let events: FakeEvent[] = [];
   let sent: SentMessage[] = [];
+  let drafts: DraftMessage[] = [];
   let delivered = 0;
   const reset = () => {
     messages = seedMailbox(mailbox, now());
     events = seedCalendar(now());
     sent = [];
+    drafts = [];
   };
   reset();
 
@@ -897,6 +911,77 @@ export function startFakeGoogle(
       references,
     });
     return Response.json({ id, threadId, labelIds: ["SENT"] });
+  };
+
+  /** The files of a multipart message, decoded: every part that names a filename. */
+  const filesOf = (binary: string): DraftMessage["attachments"] => {
+    const { headers } = parseEntity(binary);
+    const type = headerValue(headers, "Content-Type") ?? "";
+    const boundary = /boundary="?([^";]+)"?/i.exec(type)?.[1];
+    if (!/^multipart\//i.test(type) || !boundary) return [];
+    const files: DraftMessage["attachments"] = [];
+    const rest = binary.slice(binary.search(/\r?\n\r?\n/));
+    for (const part of rest.split(`--${boundary}`).slice(1)) {
+      const entity = part.replace(/^\r?\n/, "");
+      const inner = parseEntity(entity);
+      const disposition = headerValue(inner.headers, "Content-Disposition");
+      const filename = /filename="?([^";]+)"?/i.exec(disposition ?? "")?.[1];
+      if (!filename) continue;
+      const bodyAt = entity.search(/\r?\n\r?\n/);
+      files.push({
+        filename,
+        mimeType: (headerValue(inner.headers, "Content-Type") ?? "")
+          .split(";")[0]
+          .trim(),
+        contentBase64: entity.slice(bodyAt).replace(/\s+/g, ""),
+      });
+    }
+    return files;
+  };
+
+  /** users.drafts.create: stores the message as a draft. Nothing is delivered. */
+  const createDraft = async (request: Request) => {
+    const body = (await request.json().catch(() => null)) as {
+      message?: { raw?: unknown; threadId?: unknown };
+    } | null;
+    const raw = body?.message?.raw;
+    if (typeof raw !== "string" || raw === "") {
+      return googleError(400, "Invalid message", "invalidArgument");
+    }
+    const binary = Buffer.from(raw, "base64").toString("latin1");
+    const { headers, body: text } = parseEntity(binary);
+    const requested =
+      typeof body?.message?.threadId === "string" && body.message.threadId
+        ? body.message.threadId
+        : null;
+    if (
+      requested &&
+      !messages.some((message) => message.threadId === requested)
+    ) {
+      return googleError(404, "Requested entity was not found.", "notFound");
+    }
+    const instant = now();
+    const id = hex(`fake-google:draft:${instant}:${drafts.length}:${raw}`);
+    const messageId = id.slice(0, 16);
+    const threadId = requested ?? id.slice(16, 32);
+    drafts.push({
+      id: messageId,
+      draftId: `r${id.slice(32, 48)}`,
+      threadId,
+      to: addresses(decodeWords(headerValue(headers, "To") ?? "")),
+      cc: addresses(decodeWords(headerValue(headers, "Cc") ?? "")),
+      bcc: addresses(decodeWords(headerValue(headers, "Bcc") ?? "")),
+      subject: decodeWords(headerValue(headers, "Subject") ?? ""),
+      body: text,
+      inReplyTo: headerValue(headers, "In-Reply-To") ?? null,
+      references: headerValue(headers, "References") ?? null,
+      attachments: filesOf(binary),
+    });
+    const stored = drafts[drafts.length - 1];
+    return Response.json({
+      id: stored.draftId,
+      message: { id: messageId, threadId, labelIds: ["DRAFT"] },
+    });
   };
 
   /** One new message in the inbox, dated now, as though it had just arrived. */
@@ -1088,6 +1173,16 @@ export function startFakeGoogle(
 
     // Inspection, for tests and demos. Unauthenticated: there is nothing real here to protect.
     if (method === "GET" && path === "/__fake/sent") return Response.json(sent);
+    if (method === "GET" && path === "/__fake/drafts") {
+      return Response.json(
+        drafts.map((draft) => ({
+          ...draft,
+          // The draft's id and its message's, under the names a test reads them by.
+          id: draft.draftId,
+          messageId: draft.id,
+        })),
+      );
+    }
     if (method === "POST" && path === "/__fake/reset") {
       reset();
       return Response.json({ ok: true });
@@ -1155,6 +1250,25 @@ export function startFakeGoogle(
 
     if (method === "POST" && path === "/gmail/v1/users/me/messages/send") {
       return send(request);
+    }
+
+    if (method === "POST" && path === "/gmail/v1/users/me/drafts") {
+      return createDraft(request);
+    }
+
+    const thread = /^\/gmail\/v1\/users\/me\/threads\/([^/]+)$/.exec(path);
+    if (method === "GET" && thread) {
+      const inThread = messages
+        .filter((message) => message.threadId === decodeURIComponent(thread[1]))
+        .sort((a, b) => a.internalDate - b.internalDate);
+      if (inThread.length === 0) {
+        return googleError(404, "Requested entity was not found.", "notFound");
+      }
+      return Response.json({
+        id: inThread[0].threadId,
+        historyId: "1",
+        messages: inThread.map((message) => resource(message, url)),
+      });
     }
 
     const single = /^\/gmail\/v1\/users\/me\/messages\/([^/]+)$/.exec(path);
@@ -1249,6 +1363,7 @@ export function startFakeGoogle(
     url,
     port: server.port ?? 0,
     sent: () => sent.map((message) => ({ ...message })),
+    drafts: () => drafts.map((draft) => ({ ...draft })),
     reset,
     stop: async () => {
       await server.stop(true);

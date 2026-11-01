@@ -174,12 +174,13 @@ describe("what the adapter offers", () => {
     );
   });
 
-  test("exactly the four tools of the contract, in their contract names", async () => {
+  test("exactly the five tools of the contract, in their contract names", async () => {
     const tools = await listTools(connection);
     expect(tools.map((tool) => tool.name)).toEqual([
       "gmail_search_messages",
       "gmail_read_message",
       "gmail_send_reply",
+      "gmail_create_draft",
       "calendar_list_events",
     ]);
   });
