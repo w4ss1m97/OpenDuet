@@ -295,6 +295,17 @@ export async function collectProject(project: CockpitProject, deps: CollectDeps)
   };
 }
 
+const SEVERITY_RANK = { high: 0, medium: 1, low: 2 } as const;
+
+/** Extra items joined to the project items, high first; inside a level the order is kept. */
+function mergeAttention(items: AttentionItem[], extra: AttentionItem[]): AttentionItem[] {
+  if (extra.length === 0) return items;
+  return [...items, ...extra]
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => SEVERITY_RANK[a.item.severity] - SEVERITY_RANK[b.item.severity] || a.index - b.index)
+    .map(({ item }) => item);
+}
+
 export type CockpitService = {
   snapshot(): Promise<CockpitSnapshot>;
   project(name: string): Promise<{ project: ProjectData; attention: AttentionItem[] } | null>;
@@ -308,6 +319,8 @@ export function createCockpitService(options: {
   now?: () => number;
   thresholds?: Partial<CockpitThresholds>;
   deps?: Partial<CollectDeps>;
+  /** More attention lines (a usage budget); a failure here never costs the snapshot. */
+  extraAttention?: () => AttentionItem[] | Promise<AttentionItem[]>;
 } = {}): CockpitService {
   const home = options.home ?? homedir();
   const now = options.now ?? Date.now;
@@ -331,6 +344,13 @@ export function createCockpitService(options: {
     realUnderHome: (p) => safeSubpath(home, p),
     ...options.deps,
   };
+  const extra = async (): Promise<AttentionItem[]> => {
+    try {
+      return (await options.extraAttention?.()) ?? [];
+    } catch {
+      return [];
+    }
+  };
   const collect = async (projects: CockpitProject[]) => {
     const sessions = await sessionsNow();
     return Promise.all(
@@ -345,7 +365,8 @@ export function createCockpitService(options: {
       const projects = await list();
       const data = await collect(projects);
       const at = now();
-      return { projects: data, attention: buildAttention(data, thresholds, at / 1000), names: projects.map((p) => p.name), generatedAt: at };
+      const attention = mergeAttention(buildAttention(data, thresholds, at / 1000), await extra());
+      return { projects: data, attention, names: projects.map((p) => p.name), generatedAt: at };
     },
     async project(name) {
       const found = (await list()).find((p) => p.name === name);

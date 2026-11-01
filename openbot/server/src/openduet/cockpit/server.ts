@@ -1,8 +1,12 @@
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import type { Complete } from "../triage";
 import { type CockpitService, createCockpitService } from "./collect";
 import { type ExplainService, createExplainService } from "./explain";
 import { type ExploreService, createExploreService } from "./explore";
+import { createUsageIngest } from "./usage-ingest";
+import { createUsageConfigSource } from "./usage-prices";
+import { type UsageService, createUsageService } from "./usage-service";
+import { loadCockpitProjects, PROJECTS_FILE } from "./projects-file";
 
 /** What Bun tells us about the peer; the listener passes it in, a test can pass its own. */
 type Bindings = { ip?: { address: string } | null };
@@ -17,11 +21,14 @@ export type CockpitAppOptions = {
   explore?: ExploreService;
   /** The model explanation; without it the POST answers 503. */
   explain?: ExplainService;
+  /** Token usage from the Claude transcripts; without it the usage routes answer 404. */
+  usage?: UsageService;
 };
 
 const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
 const EXPLAIN_POST = /^\/api\/cockpit\/projects\/[^/]+\/explain$/;
 const HEAD_SHA = /^[0-9a-f]{40}$/;
+const SESSION_ID = /^[A-Za-z0-9_-]{1,100}$/;
 
 /**
  * The cockpit's own Hono app. It never joins the main app, whose /api is reachable from the LAN and
@@ -101,6 +108,39 @@ export function createCockpitApp(options: CockpitAppOptions) {
     }
   });
 
+  // A repeated query parameter is read as an empty (invalid) one rather than guessing which to use.
+  const param = (c: Context, name: string) => {
+    const values = c.req.queries(name);
+    return values === undefined ? undefined : values.length === 1 ? values[0] : "";
+  };
+
+  app.get("/api/cockpit/usage", async (c) => {
+    if (!options.usage) return c.json({ error: "not found" }, 404);
+    const out = await options.usage.summary(param(c, "from"), param(c, "to"));
+    return out.ok ? c.json(out.body) : c.json({ error: out.error }, 400);
+  });
+
+  app.get("/api/cockpit/usage/sessions/:id", async (c) => {
+    const id = c.req.param("id");
+    const found = options.usage && SESSION_ID.test(id) ? await options.usage.session(id) : null;
+    return found ? c.json(found) : c.json({ error: "not found" }, 404);
+  });
+
+  app.get("/api/cockpit/usage/budgets", async (c) => (options.usage ? c.json(await options.usage.budgets()) : c.json({ error: "not found" }, 404)));
+
+  app.get("/api/cockpit/usage/advisor", async (c) => (options.usage ? c.json(await options.usage.advisor()) : c.json({ error: "not found" }, 404)));
+
+  app.get("/api/cockpit/usage/export.csv", async (c) => {
+    if (!options.usage) return c.json({ error: "not found" }, 404);
+    const out = await options.usage.csv(param(c, "view"), param(c, "from"), param(c, "to"));
+    if (!out.ok) return c.json({ error: out.error }, 400);
+    return c.body(out.text, 200, {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${out.filename}"`,
+      "X-Content-Type-Options": "nosniff",
+    });
+  });
+
   app.notFound((c) => c.json({ error: "not found" }, 404));
   return app;
 }
@@ -116,12 +156,26 @@ export function startCockpitServer(options: {
   explore?: ExploreService;
   /** The model that explains projects; without a completer the explain POST answers 503. */
   explain?: { complete?: Complete; dir?: string };
+  /**
+   * Token usage. Left out, it is the real one (this Mac's transcripts and ~/.config/openduet/cockpit) unless a
+   * `service` is injected, which is how tests run without touching the machine; `null` turns it off.
+   */
+  usage?: UsageService | null;
 }) {
   let bound = options.port;
+  const usage =
+    options.usage === undefined && options.service === undefined
+      ? createUsageService({
+          ingest: createUsageIngest(),
+          config: createUsageConfigSource(),
+          listProjects: () => loadCockpitProjects({ file: PROJECTS_FILE }),
+        })
+      : (options.usage ?? undefined);
   const app = createCockpitApp({
     getPort: () => bound,
     origins: options.origins,
-    service: options.service ?? createCockpitService(),
+    service: options.service ?? createCockpitService({ extraAttention: usage ? () => usage.attention() : undefined }),
+    usage,
     explore: options.explore ?? createExploreService(),
     explain: createExplainService({ complete: options.explain?.complete, dir: options.explain?.dir }),
   });
@@ -132,5 +186,14 @@ export function startCockpitServer(options: {
     fetch: (request, srv) => app.fetch(request, { ip: srv.requestIP(request) }),
   });
   bound = server.port ?? options.port;
+  if (usage) {
+    // The timer is unref'd, so it never keeps the process alive; stopping the listener stops it too.
+    const stopPolling = usage.start();
+    const stopServer = server.stop.bind(server);
+    server.stop = (force?: boolean) => {
+      stopPolling();
+      return stopServer(force);
+    };
+  }
   return server;
 }
