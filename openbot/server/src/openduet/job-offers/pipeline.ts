@@ -7,7 +7,7 @@ import type { OfferStore } from "./store";
 
 /** The steps shared by the intake sweep and the paste route: ask the model, read offers, score an offer. */
 
-export const OFFER_CALL_TIMEOUT_MS = 60_000;
+export const OFFER_CALL_TIMEOUT_MS = 120_000;
 const TIMED_OUT = "Source illisible : pas de réponse à temps.";
 
 /** Rejects when `work` has not settled in time. */

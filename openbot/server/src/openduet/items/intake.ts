@@ -594,7 +594,7 @@ async function debriefSweep(
   }
 }
 
-const OFFER_TIMEOUT_MS = 60_000;
+const OFFER_TIMEOUT_MS = 120_000;
 const MAX_OFFER_SOURCES_PER_RUN = 5;
 const MAX_OFFER_SCORES_PER_RUN = 10;
 

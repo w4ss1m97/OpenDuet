@@ -34,14 +34,22 @@ export function dedupKey(kind: CardKind, input: { topic?: string; bulletIds?: st
   return createHash("sha256").update(`${kind}|${part}`).digest("hex");
 }
 
+/** The model answered something that is not one JSON object, often a list cut by the token cap. */
+export class RevisionAnswerError extends Error {
+  constructor() {
+    super("answer_unreadable");
+    this.name = "RevisionAnswerError";
+  }
+}
+
 function jsonObject(answer: string): unknown {
   const start = answer.indexOf("{");
   const end = answer.lastIndexOf("}");
-  if (start === -1 || end <= start) return null;
+  if (start === -1 || end <= start) throw new RevisionAnswerError();
   try {
     return JSON.parse(answer.slice(start, end + 1));
   } catch {
-    return null;
+    throw new RevisionAnswerError();
   }
 }
 
@@ -57,7 +65,7 @@ const conceptSchema = z.object({
     .string()
     .trim()
     .min(1)
-    .refine((a) => wordCount(a) <= 120, "answer too long"),
+    .refine((a) => wordCount(a) <= 180, "answer too long"),
   keyPoints: z.array(z.string().trim().min(1).max(120)).min(2).max(4),
 });
 

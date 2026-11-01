@@ -9,6 +9,7 @@ import {
   normalizeTopic,
   parseConcepts,
   parseStories,
+  RevisionAnswerError,
 } from "../src/openduet/revision/cards";
 import { cvMasterFixture as master } from "./fixtures/cv-master";
 
@@ -30,7 +31,7 @@ describe("topics and keys", () => {
 
 describe("concept cards", () => {
   it("keeps good cards, drops bad ones", () => {
-    const long = Array(121).fill("mot").join(" ");
+    const long = Array(181).fill("mot").join(" ");
     const answer = JSON.stringify({
       cards: [
         good("Index"),
@@ -48,8 +49,9 @@ describe("concept cards", () => {
     expect(cards[0]).toMatchObject({ kind: "concept", skillGroupId: "sk-lang", masterHash: "h1", bulletIds: [] });
     expect(cards[0].dedupKey).toBe(dedupKey("concept", { topic: "Index" }));
   });
-  it("garbage gives no card", () => {
-    expect(parseConcepts("pas du json", ctx)).toEqual([]);
+  it("garbage or a list cut by the token cap throws, so the run reports it", () => {
+    expect(() => parseConcepts("pas du json", ctx)).toThrow(RevisionAnswerError);
+    expect(() => parseConcepts('{"cards":[{"topic":"Index","question":"Q ?","answer":"coupé', ctx)).toThrow(RevisionAnswerError);
   });
   it("prompt lists the group items, the existing topics and the max", () => {
     const p = buildConceptPrompt(master, master.skills[0], ["Index"], 5);
