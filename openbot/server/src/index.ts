@@ -18,6 +18,8 @@ import { loadProjects } from "./openduet/items/project-scanner";
 import { createItemStore } from "./openduet/items/store";
 import { createAnarlogCli } from "./openduet/missions/anarlog";
 import { createDebriefStore } from "./openduet/missions/debrief-store";
+import { createOfferStore } from "./openduet/job-offers/store";
+import { createFileProfileSource } from "./openduet/job-offers/profile";
 import { createPrepStore } from "./openduet/missions/prep-store";
 import { createMissionStore } from "./openduet/missions/store";
 import { createActivityStore } from "./activity/activity";
@@ -2325,6 +2327,9 @@ const prepComplete = createModelCompleter({
       environment: process.env,
     }),
 });
+const intakeOffers = createOfferStore(database);
+// Null profile (scoring off) unless OPENDUET_PROFILE_PATH is an absolute path to an existing file.
+const offerProfile = createFileProfileSource(process.env.OPENDUET_PROFILE_PATH);
 const intakeDebriefs = createDebriefStore(database);
 // Null (feature off) unless OPENDUET_ANARLOG_BIN is an absolute path to an existing file.
 const anarlogSource = createAnarlogCli(process.env.OPENDUET_ANARLOG_BIN);
@@ -2357,6 +2362,7 @@ const intakeEveryone = async () => {
           store: intakeItems,
           missions: intakeMissions,
           prep: { store: intakePreps, complete: prepComplete },
+          offers: { store: intakeOffers, profile: offerProfile, complete: prepComplete },
           ...(anarlogSource
             ? { debrief: { store: intakeDebriefs, source: anarlogSource, complete: debriefComplete } }
             : {}),
@@ -2828,6 +2834,7 @@ const app = createApp(
       missions: intakeMissions,
       preps: intakePreps,
       debrief: { store: intakeDebriefs, source: anarlogSource },
+      offers: { store: intakeOffers, profile: offerProfile, complete: prepComplete },
       // The checklist onboarding ends on. Facts and verdicts about this configuration, never values.
       setup: createSetupSources({
         productName: tenantPackage.productName,

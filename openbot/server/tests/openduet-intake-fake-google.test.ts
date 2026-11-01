@@ -162,7 +162,7 @@ test("a reply on a known thread moves the mission applied -> talking and ties th
 test("an unmatched Malt mail makes one proposed piste, and a second run makes no other", async () => {
   const me = await person();
   const t = tag();
-  const subject = `Nouvelle mission Rust ${t}`;
+  const subject = `Un client vous contacte pour du Rust ${t}`;
   const mail = await deliver("Malt <notifications@malt.fr>", subject, "Un client cherche un dev Rust.");
   await runIntake(depsFor(call), me, "bot");
   await runIntake(depsFor(call), me, "bot");
@@ -171,6 +171,15 @@ test("an unmatched Malt mail makes one proposed piste, and a second run makes no
   expect(mine[0]).toMatchObject({ review: "proposed", stage: "piste" });
   expect(mine[0]?.threadIds).toEqual([mail.threadId]);
   expect((await itemFor(me, mail.id))?.missionId).toBe(mine[0]?.id);
+});
+
+test("an unmatched mail with no signal (a job alert) makes no piste", async () => {
+  const me = await person();
+  const t = tag();
+  const mail = await deliver("Malt <notifications@malt.fr>", `Job alert ${t} : Rust`, "Découvrez des offres.");
+  await runIntake(depsFor(call), me, "bot");
+  expect((await missions.list(me, {})).filter((m) => m.title.includes(t))).toHaveLength(0);
+  expect((await itemFor(me, mail.id))?.missionId ?? null).toBeNull();
 });
 
 test("a company name alone never refuses a mission: the rejection is only noted", async () => {

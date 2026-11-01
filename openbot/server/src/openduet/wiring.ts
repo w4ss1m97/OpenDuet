@@ -6,7 +6,8 @@ import type { Database } from "../db/client";
 import { users } from "../db/schema";
 import { createProactiveStore } from "../proactive/store";
 import { ProactiveNotFoundError } from "../proactive/types";
-import { type BriefInterview, type BriefMission, buildMorningBrief, type CallTool, openduetTools } from "./brief";
+import { type BriefInterview, type BriefMission, type BriefOffer, buildMorningBrief, type CallTool, openduetTools } from "./brief";
+import { createOfferStore, type OfferStore } from "./job-offers/store";
 import { lastIntakeReport } from "./items/intake";
 import { parisDayAt } from "./items/paris-time";
 import { createItemStore, type ItemStore } from "./items/store";
@@ -69,6 +70,25 @@ export async function loadBriefInterviews(
       };
     }),
   );
+}
+
+/** The brief's offers: shown, scored in the last 24 hours, best five. */
+export async function loadBriefOffers(
+  store: Pick<OfferStore, "topShown">,
+  ownerUserId: string,
+  now: Date,
+): Promise<BriefOffer[]> {
+  const rows = await store.topShown(ownerUserId, new Date(now.getTime() - DAY_MS), 5);
+  return rows.map((o) => ({
+    id: o.id,
+    title: o.title,
+    company: o.company,
+    platform: o.platform,
+    score: o.score as number,
+    reasons: o.reasons,
+    tjmMax: o.tjmMax,
+    remote: o.remote,
+  }));
 }
 
 /** How a card the person asked for is told from research's: its run id starts with this. */
@@ -231,6 +251,7 @@ export function createOpenDuetTools(deps: {
   const items = createItemStore(deps.database);
   const missions = createMissionStore(deps.database);
   const preps = createPrepStore(deps.database);
+  const offers = createOfferStore(deps.database);
   return (actorId, botId, initiator) => [
     ...openduetTools({
       actorId,
@@ -251,6 +272,7 @@ export function createOpenDuetTools(deps: {
             model: deps.model,
             missions: (ownerUserId) => loadBriefMissions(missions, ownerUserId, new Date()),
             interviews: (ownerUserId) => loadBriefInterviews(items, preps, ownerUserId, new Date()),
+            offers: (ownerUserId) => loadBriefOffers(offers, ownerUserId, new Date()),
           },
           input,
         ),

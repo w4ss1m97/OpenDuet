@@ -353,6 +353,57 @@ describe("morning brief interviews section", () => {
   });
 });
 
+describe("morning brief offers section", () => {
+  const complete = async () => '{"verdict":"can_wait","reason":"Routine."}';
+  const row = {
+    id: "o1",
+    title: "DevOps AWS",
+    company: "Acme",
+    platform: "malt",
+    score: 88,
+    reasons: ["Stack AWS"],
+    tjmMax: 750,
+    remote: "hybrid",
+  } as const;
+
+  test("is empty when no loader is wired", async () => {
+    const { callTool } = connector();
+    const brief = await buildMorningBrief({ callTool, model: "m", now: () => NOW, complete }, input);
+    expect(brief.offers).toEqual([]);
+    expect(brief.couldNotCheck.map((c) => c.source)).not.toContain("Offres");
+  });
+
+  test("lists what the loader returns for this person", async () => {
+    const { callTool } = connector();
+    const asked: string[] = [];
+    const brief = await buildMorningBrief(
+      { callTool, model: "m", now: () => NOW, complete, offers: async (owner) => (asked.push(owner), [row]) },
+      input,
+    );
+    expect(brief.offers).toEqual([row]);
+    expect(asked).toEqual(["dev-local-user"]);
+  });
+
+  test("a loader that fails is named Offres and the rest of the brief stays", async () => {
+    const { callTool } = connector();
+    const brief = await buildMorningBrief(
+      {
+        callTool,
+        model: "m",
+        now: () => NOW,
+        complete,
+        offers: async () => {
+          throw new Error("database is down");
+        },
+      },
+      input,
+    );
+    expect(brief.offers).toEqual([]);
+    expect(brief.couldNotCheck).toEqual([{ source: "Offres", why: "database is down" }]);
+    expect(brief.checked.mail).toBe(3);
+  });
+});
+
 describe("the morning_brief tool", () => {
   test("returns the brief as JSON and refuses unknown arguments", async () => {
     let built = 0;
@@ -373,6 +424,7 @@ describe("the morning_brief tool", () => {
           couldNotCheck: [],
           missions: [],
           interviews: [],
+          offers: [],
           checked: { mail: 0, byRules: 0, byModel: 0 },
         };
       },

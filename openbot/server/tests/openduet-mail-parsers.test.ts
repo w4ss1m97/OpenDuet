@@ -28,6 +28,18 @@ test("Malt message is a followup in missions, without a date", () => {
   expect(item?.why).toContain("Malt");
 });
 
+test("a platform's offer alert is not an item: the offers sweep reads it", () => {
+  for (const [from, subject] of [
+    ["Malt <notifications@malt.fr>", "Nouvelles offres pour vous"],
+    ["Free-Work <no-reply@mail.free-work.com>", "Alerte : 3 nouveaux projets"],
+    ["Collective <hello@collective.work>", "Une sélection de missions pour vous"],
+  ] as const) {
+    expect(parseMail({ id: "m-alert", from, subject, date: "2026-11-02T09:12:00.000Z", snippet: "Découvrez" })).toBeNull();
+  }
+  // A conversation from the same platform is still an item.
+  expect(parseMail({ ...fixture("malt"), subject: "Nouvelle alerte : message de Camille" })?.channelId).toBe("missions");
+});
+
 test("Malt interview with date and time is an active interview", () => {
   const item = parseMail(fixture("malt-interview"));
   expect(item?.kind).toBe("interview");
@@ -38,9 +50,9 @@ test("Malt interview with date and time is an active interview", () => {
   expect(classify(item)).toBe("active");
 });
 
-test("Free-Work and Collective are followups in missions", () => {
+test("a Free-Work message is a followup in missions; a Collective opportunity alert is an offer source, no item", () => {
   expect(parseMail(fixture("free-work"))).toMatchObject({ kind: "followup", channelId: "missions" });
-  expect(parseMail(fixture("collective"))).toMatchObject({ kind: "followup", channelId: "missions" });
+  expect(parseMail(fixture("collective"))).toBeNull();
 });
 
 test("LinkedIn direct message is a followup, job alerts are ignored", () => {
