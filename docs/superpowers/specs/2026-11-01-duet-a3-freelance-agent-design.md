@@ -132,3 +132,102 @@ wiring.ts, app.ts, delivery/push.ts.
 No real sample mails (regexes guessed: forward 1 mail per platform for fixtures) · Malt "proposition de projet" may be
 a client conversation (v1 = offer) · dedup relies on LLM company · hybrid outside IDF filtered · no phone push (needs
 APNs in duet-ios) · alert mails no longer make "à suivre" items · LinkedIn excluded in v1.
+
+## A3b — Tailored CV (micro-spec, draft for the architect)
+
+- **Goal:** for one offer, a PDF CV built from the master CV only, ordered and phrased for that offer, with a
+  covered/missing keywords report; master and tailored CVs downloadable from the server.
+- **Files:** db/schema/openduet-cv.ts (+ drizzle.config), migration 0073, job-offers/{cv-schema.ts (zod master +
+  tailoring answer), cv-tailor.ts (prompt, parse, guard, match), cv-render.ts (HTML template → PDF), cv-store.ts,
+  cv-routes.ts}, job-offers/profile.ts (DB profile source: text rendered from the master, file fallback),
+  items/intake.ts (optional sweep), src/index.ts, app.ts, .env.example.
+- **Facts checked:** playwright-core 1.62.1 is a root workspace dependency; Google Chrome is installed in
+  /Applications. Render with `chromium.launch({executablePath: OPENDUET_CHROME_BIN})` + `page.pdf()`; no env or bad
+  path → PDF routes answer 503 `pdf_unavailable` (content routes still work).
+- **Master CV:** one row per owner, jsonb validated by zod: header {name, title, email, phone, linkedin}, profile,
+  certifications [{year, name}], experiences [{id, role, company, start, end, context, bullets [{id, text}],
+  environment []}], skills [{group, items []}], languages [{name, level}]. Import = `PUT /api/openduet/cv` (JSON),
+  first value generated once from the current PDF CV (by Claude in session, checked by Wassim). Ids are stable slugs.
+- **Tailoring answer (LLM):** a selection, not a new CV: {title, profile, experiences [{id, bulletIds (ordered,
+  subset, ≥2 per kept experience, all 4 experiences kept), rewrites {bulletId: text}}], skillsOrder [group],
+  highlightSkills [≤12 items]}. Code guard: unknown ids dropped; a rewrite or the profile/title is rejected (original
+  text kept) if it contains a number absent from the source bullet (profile: from the master) or a tech term absent
+  from the master's vocabulary (environment + skills + bullets, case-insensitive); highlightSkills must exist in the
+  master. Dates, companies, certifications, contact are never from the LLM.
+- **Match report (code, no LLM):** offer.skills vs master vocabulary (normalized: lowercase, aliases k8s=kubernetes,
+  gha=github actions…) → covered [], missing [].
+- **Versions:** table openduet_cv_versions: one per (owner, offer), status pending|ready|failed, content jsonb (the
+  checked selection), match jsonb, master_hash, attempts, claimed_at, last_error, generated_at. Generated on demand
+  (`POST /api/openduet/offers/:id/cv`, inline ≤ 90 s, idempotent unless `?regenerate=1`) AND by the intake for new
+  `shown` offers (≤ 2 per run, after offerSweep). Master changed (hash) → versions stay, marked stale in the API.
+- **Render:** one HTML template, 2 pages max, ATS-friendly (single column, real text, no images), French; PDF made
+  on each GET, never stored: `GET /api/openduet/cv.pdf` (master), `GET /api/openduet/offers/:id/cv.pdf`,
+  `GET /api/openduet/offers/:id/cv` (JSON: content + match + stale). File name `CV-Wassim-Souilah-<company>.pdf`.
+- **Profile for scoring:** A3a's ProfileSource reads the master (rendered as text) when it exists, else the file.
+- **Edge cases:** offer without skills → order only by title/description · English offer → CV stays French (v1) ·
+  Chrome missing → 503, JSON still works · two requests at once → one generation (claim).
+- **Tests:** zod master (bad id, duplicate ids) · guard (invented number, invented tool, unknown bullet id, highlight
+  not in master → dropped/original) · match aliases · render HTML snapshot (escapes text, 4 experiences, chosen order)
+  · PDF smoke test skipped when OPENDUET_CHROME_BIN is unset · store claim/owner/cascade on offer delete · routes
+  (404 other owner, 503 without Chrome, idempotent POST) · intake sweep ≤ 2, only `shown`.
+- **Out of scope:** cover letter (A4), English CV, DOCX, editing in the app, the iOS screen, sending the CV.
+
+## A3b — Reviewed spec (architect, 2026-11-01) — supersedes the draft above
+
+### Facts checked
+- playwright-core 1.62.1 is a ROOT dependency, hoisted to openbot/node_modules (resolves from server/src); declare it
+  in server/package.json at the same version. Runtime image (oven/bun) has no Chrome → PDF routes 503 there.
+- No route deletes offers (A3a): versions cascade on offer AND user delete. Claim pattern = store.ts (UPDATE … WHERE
+  claimable RETURNING, holder = exact claimed_at, stale 10 min). Reuse askModel (60 s), newMarker/stripMarker,
+  prepComplete. Single-user dev auth: curl PUT works locally.
+- Draft errors: vocabulary/number guard is unsound (unnumbered claims, numbers in words, seniority inflation slip
+  through; aliases cause false rejects) → selection only.
+
+### Decisions
+1. Selection only (v1): the LLM returns ids/indexes, never text. Wassim writes variants in the master: titles[1..4],
+   profiles[1..3]. Bullet rewording = possible A3b.2.
+2. Master zod (job-offers/cv-schema.ts), strict, ≤64 KB: header {name, email, phone?, linkedin? https, location?},
+   titles[], profiles[≤900], certifications [{year,name}], experiences ≤12 [{id, role, company, start YYYY-MM, end
+   YYYY-MM|null, context?, bullets 1–12 [{id, text ≤300}], environment ≤30}], skills ≤12 [{id, group, items ≤30}],
+   languages[]. Ids `^[a-z0-9-]{1,40}$`, unique across the document.
+3. Answer `{titleIndex, profileIndex, experiences:[{id, bulletIds[]}], skillGroupOrder:[id], highlightSkills ≤12}`.
+   `applyTailoring` (pure): unknown/duplicate ids dropped, index out of range → 0, all experiences kept in master
+   order, 2–6 bullets each (completed from master order), ≤20 total, highlights only if a master skill item (master
+   spelling). Result = master-shaped snapshot, re-validated by the master zod.
+4. Match (pure): normalize + ~15 ALIASES (k8s, gha, tf, gcp…), offer.skills vs skill items + environments + bullets
+   (whole word) → {covered, missing}. No skills → empty.
+5. Migration 0073 (`bun run db:generate --name openduet_cv`), schema db/schema/openduet-cv.ts: `openduet_cv_masters`
+   (owner PK → users cascade, content jsonb, content_hash, timestamps); `openduet_cv_versions` (id, owner → users
+   cascade, offer_id → openduet_offers cascade, status pending|ready|failed, content, match, master_hash, claimed_at,
+   last_error, generated_at, timestamps; UNIQUE (owner, offer); CHECK ready ⇒ content+match+generated_at). No attempts
+   cap (on demand only).
+6. cv-store.ts: getMaster, putMaster (upsert + sha256), ensureVersion, claimVersion(owner, offerId, {regenerate})
+   (pending|failed, or ready+regenerate; unclaimed or stale), complete/fail holder-only, getVersion. Owner-filtered.
+7. No intake sweep in v1 (on demand only).
+8. Generation (POST): one askModel call; master as id-tagged trusted list, offer fenced. Bad answer → failed, 503.
+9. Render (cv-render.ts): `renderCvHtml` pure, one column A4, no images, FR labels, everything escaped, https-only
+   linkedin, CSP meta `default-src 'none'; style-src 'unsafe-inline'` first. `createPdfRenderer(bin)`: one browser per
+   render (launch 15 s, context javaScriptEnabled false + offline, route abort all, setContent 5 s, pdf A4), 30 s cap,
+   close in finally, semaphore 2 (3rd → 503 pdf_busy), never --no-sandbox, bad bin → PdfUnavailable → 503.
+10. Routes: `/api/openduet/cv` (createCvRoutes): GET / (404 if none), PUT / (64 KB, zod 400 with path), GET /pdf.
+    In createOfferRoutes via optional deps.cv (`registerOfferCvRoutes`, before /:id): POST /:id/cv[?regenerate=1]
+    (ready → returned; no master → 409 no_master; claimed → 409 cv_in_progress), GET /:id/cv {version, match, stale},
+    GET /:id/cv/pdf (ready only). PDF: attachment `CV-<slug(name)>-<slug(company ?? platform)>.pdf`, no-store.
+    Other owner → 404.
+11. `createDbProfileSource(cvStore, fallback)`: masterToText (≤8 000) if a master exists, else the file.
+12. Env `OPENDUET_CHROME_BIN=/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` (.env.example). Logs: names.
+
+### Batches (TDD, Sonnet; `bun test tests/openduet-cv` + typecheck)
+- B1 schema + store: openduet-cv.ts, drizzle.config.ts, 0073, cv-schema.ts, cv-store.ts. Tests openduet-cv-schema,
+  openduet-cv-store.integration (CHECKs, upsert/hash, ensure idempotent, parallel claim, non-holder, stale, regenerate,
+  owner, cascades).
+- B2 pure: cv-tailor.ts (buildTailorPrompt, parseTailoring, applyTailoring, matchSkills, masterToText),
+  renderCvHtml. Tests openduet-cv-tailor, openduet-cv-match, openduet-cv-render.
+- B3 PDF + routes + wiring: createPdfRenderer, cv-routes.ts, routes.ts hook, profile.ts, app.ts, index.ts,
+  .env.example, server/package.json. Tests openduet-cv-pdf (skipped without bin), openduet-cv-routes.integration,
+  openduet-job-offers-profile.
+- Then: Claude drafts the master JSON from the PDF CV, Wassim checks, curl PUT.
+
+### Risks
+Playwright pipe under Bun may hang → fallback `Bun.spawn(chrome --headless --print-to-pdf)` · 2 pages not guaranteed
+(check by hand) · selection-only = less tailored · Chrome auto-update drift → 503 · offer text fenced, same provider.

@@ -5,6 +5,7 @@ import type { AppVariables } from "../../auth/guards";
 import type { OfferPlatform, OpenduetOffer } from "../../db/schema/openduet-job-offers";
 import type { Complete } from "../triage";
 import type { MissionStore } from "../missions/store";
+import { type CvRouteDeps, registerOfferCvRoutes } from "./cv-routes";
 import { htmlToText } from "./extract";
 import { askModel, extractAndStore, OFFER_CALL_TIMEOUT_MS, scoreOffer } from "./pipeline";
 import type { ProfileSource } from "./profile";
@@ -47,6 +48,8 @@ export type OfferRouteDeps = {
   missions: Pick<MissionStore, "createPiste" | "get">;
   profile: ProfileSource;
   complete: Complete;
+  /** The tailored CV of an offer (A3b). Absent: the `/:id/cv` routes are not served. */
+  cv?: CvRouteDeps;
   /** Overall bound of a paste (120 s). One model call is bounded at 60 s. */
   overallMs?: number;
 };
@@ -132,6 +135,9 @@ export function createOfferRoutes(deps: OfferRouteDeps, requireUser: MiddlewareH
       return context.json({ error: "Impossible de lire cette offre. Réessaie." }, 503);
     }
   });
+
+  // Before the `/:id` routes.
+  if (deps.cv) registerOfferCvRoutes(routes, deps.cv, store);
 
   routes.get("/:id", async (context) => {
     const offer = await store.get(context.var.actor.id, context.req.param("id"));

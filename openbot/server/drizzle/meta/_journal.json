@@ -512,6 +512,13 @@
       "when": 1793515082135,
       "tag": "0072_openduet_job_offers",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1793545029810,
+      "tag": "0073_openduet_cv",
+      "breakpoints": true
     }
   ]
 }
