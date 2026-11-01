@@ -1,3 +1,4 @@
+import { isOfferSource } from "../job-offers/sources";
 import { parisDate, parisParts } from "./paris-time";
 import type { ItemCandidate, ItemKind } from "./types";
 
@@ -173,6 +174,8 @@ function candidate(
 export function parseMail(m: MailMessage): ItemCandidate | null {
   const domain = senderDomain(m.from);
   const text = `${m.subject}\n${m.snippet}\n${m.body ?? ""}`;
+  // A platform's alert is read by the offers sweep, not kept as an item.
+  if (isOfferSource(m)) return null;
 
   if (fromDomain(domain, ["antai.gouv.fr"]))
     return candidate(m, "fine", "maison", "Amende (ANTAI)", text);

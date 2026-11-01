@@ -64,6 +64,18 @@ export type BriefInterview = {
   prep: { status: string; content: unknown } | null;
 };
 
+/** A job offer worth a look: scored high in the last day. */
+export type BriefOffer = {
+  id: string;
+  title: string;
+  company: string | null;
+  platform: string;
+  score: number;
+  reasons: string[];
+  tjmMax: number | null;
+  remote: string;
+};
+
 export type MorningBrief = {
   /** ISO 8601, when the brief was made. */
   at: string;
@@ -76,6 +88,8 @@ export type MorningBrief = {
   missions: BriefMission[];
   /** Tomorrow's interviews; empty when none, or when they could not be read (see couldNotCheck). */
   interviews: BriefInterview[];
+  /** Freelance offers scored high in the last 24 hours; empty when none, or when they could not be read (see couldNotCheck). */
+  offers: BriefOffer[];
   /** Each source that could not be read, and why, in words the person can act on. */
   couldNotCheck: { source: string; why: string }[];
   checked: { mail: number; byRules: number; byModel: number };
@@ -203,6 +217,8 @@ export async function buildMorningBrief(
     missions?: (ownerUserId: string) => Promise<BriefMission[]>;
     /** Reads this person's interviews tomorrow. Absent, the brief has no interviews section. */
     interviews?: (ownerUserId: string) => Promise<BriefInterview[]>;
+    /** Reads this person's best new job offers. Absent, the brief has no offers section. */
+    offers?: (ownerUserId: string) => Promise<BriefOffer[]>;
   },
   input: {
     actorId: string;
@@ -230,6 +246,7 @@ export async function buildMorningBrief(
     calendar: [],
     missions: [],
     interviews: [],
+    offers: [],
     couldNotCheck,
     checked: { mail: 0, byRules: 0, byModel: 0 },
   };
@@ -349,6 +366,13 @@ export async function buildMorningBrief(
       brief.interviews = await deps.interviews(input.actorId);
     } catch (error) {
       couldNotCheck.push({ source: "Entretiens", why: why(error) });
+    }
+  }
+  if (deps.offers) {
+    try {
+      brief.offers = await deps.offers(input.actorId);
+    } catch (error) {
+      couldNotCheck.push({ source: "Offres", why: why(error) });
     }
   }
   return brief;

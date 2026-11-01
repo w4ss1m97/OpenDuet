@@ -46,6 +46,7 @@ export default defineConfig({
     "./src/db/schema/openduet-missions.ts",
     "./src/db/schema/openduet-interview-preps.ts",
     "./src/db/schema/openduet-interview-debriefs.ts",
+    "./src/db/schema/openduet-job-offers.ts",
   ],
   out: "./drizzle",
   dbCredentials: {

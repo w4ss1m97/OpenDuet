@@ -505,6 +505,13 @@
       "when": 1793495075330,
       "tag": "0071_openduet_interview_debriefs",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1793515082135,
+      "tag": "0072_openduet_job_offers",
+      "breakpoints": true
     }
   ]
 }

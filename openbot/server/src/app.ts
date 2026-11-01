@@ -120,6 +120,7 @@ import type { DebriefStore } from "./openduet/missions/debrief-store";
 import { createItemRoutes } from "./openduet/items/routes";
 import type { ItemStore } from "./openduet/items/store";
 import type { PrepStore } from "./openduet/missions/prep-store";
+import { createOfferRoutes, type OfferRouteDeps } from "./openduet/job-offers/routes";
 import { createMissionRoutes } from "./openduet/missions/routes";
 import type { MissionStore } from "./openduet/missions/store";
 import { createSetupRoutes, type SetupSources } from "./openduet/setup";
@@ -473,6 +474,8 @@ export function createApp(
       preps?: PrepStore;
       /** Interview debriefs, served beside the prep sheets. `source` null: Anarlog is not set up. */
       debrief?: { store: DebriefStore; source: AnarlogSource | null };
+      /** Job offers (A3a): list, dismiss, apply, paste. Needs `missions` to be served. See openduet/job-offers. */
+      offers?: Omit<OfferRouteDeps, "missions">;
       setup?: SetupSources;
       tasks?: TaskStore;
       intake?: TaskIntake;
@@ -1734,6 +1737,11 @@ export function createApp(
     app.route(
       "/api/openduet/missions",
       createMissionRoutes(coworker.openduet.missions, requireUser, coworker.openduet.preps),
+    );
+  if (coworker?.openduet?.missions && coworker.openduet.offers)
+    app.route(
+      "/api/openduet/offers",
+      createOfferRoutes({ ...coworker.openduet.offers, missions: coworker.openduet.missions }, requireUser),
     );
   /*
    * Signed in, unlike `/api/capabilities`, which anybody can read. The checklist names what this

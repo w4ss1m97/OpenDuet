@@ -12,6 +12,11 @@ import {
   startsInMatchWindow,
 } from "../missions/debrief";
 import type { DebriefStore } from "../missions/debrief-store";
+import { type OfferStore } from "../job-offers/store";
+import { htmlToText } from "../job-offers/extract";
+import { askModel, extractAndStore, scoreOffer } from "../job-offers/pipeline";
+import type { ProfileSource } from "../job-offers/profile";
+import { isOfferSource, platformOf } from "../job-offers/sources";
 import { contactOf, missionSignal, namesCompany } from "../missions/mail-signal";
 import { MAX_PREPS_PER_RUN, PREP_WINDOW_MS, buildPrepPrompt, matchEventMission, parsePrep, prepDue } from "../missions/prep";
 import type { PrepStore } from "../missions/prep-store";
@@ -66,6 +71,8 @@ export type IntakeDeps = {
   prep?: { store: PrepStore; complete: Complete; timeoutMs?: number };
   /** Interview debriefs from Anarlog recordings. Needs `missions`; absent, no debrief is written. `timeoutMs` bounds one generation (90 s). */
   debrief?: { store: DebriefStore; source: AnarlogSource; complete: Complete; timeoutMs?: number };
+  /** Job-offer alerts from the freelance platforms. Absent, those mails are left alone. `timeoutMs` bounds one LLM call (60 s). */
+  offers?: { store: OfferStore; profile: ProfileSource; complete: Complete; timeoutMs?: number };
 };
 
 type ScanResult = {
@@ -119,6 +126,8 @@ async function applyMailToMissions(
     }
   }
 
+  // A mail with no meaning for a mission (a job alert) never becomes a piste.
+  if (!mission && signal === null) return;
   if (!mission) {
     if (!candidate) return;
     const subject = mail.subject.trim();
@@ -301,9 +310,18 @@ export async function runIntake(
             : (await deps.store.insertIfNew(ownerUserId, c, status, remindAt)) !== null;
           if (inserted) report[status === "active" ? "added" : "proposed"]++;
         }
+        if (deps.offers && mails) {
+          for (const m of mails.messages) {
+            const platform = platformOf(m.from);
+            if (!platform || !isOfferSource(m)) continue;
+            const sent = new Date(m.date);
+            await deps.offers.store.ensureSource(ownerUserId, `gmail:${m.id}`, platform, Number.isNaN(sent.getTime()) ? now : sent);
+          }
+        }
         if (deps.missions && mails) {
           const bySource = new Map(candidates.map((c) => [c.sourceHash, c]));
           for (const m of mails.messages) {
+            if (isOfferSource(m)) continue;
             const candidate = bySource.get(`gmail:${m.id}`);
             const aboutMission = candidate?.channelId === "missions";
             if (!aboutMission && !mails.fromContacts.has(m.id)) continue;
@@ -339,6 +357,7 @@ export async function runIntake(
   if (deps.missions && deps.prep) {
     await prepSweep({ missions: deps.missions, store: deps.store, prep: deps.prep, call }, ownerUserId, now);
   }
+  if (deps.offers) await offerSweep({ offers: deps.offers, call }, ownerUserId, now);
   report.failed.sort((a, b) => a.scanner.localeCompare(b.scanner));
   reports.set(ownerUserId, report);
   return report;
@@ -572,5 +591,72 @@ async function debriefSweep(
     }
   } catch (error) {
     logDebriefError(error);
+  }
+}
+
+const OFFER_TIMEOUT_MS = 60_000;
+const MAX_OFFER_SOURCES_PER_RUN = 5;
+const MAX_OFFER_SCORES_PER_RUN = 10;
+
+function logOfferError(error: unknown): void {
+  console.error(
+    JSON.stringify({
+      type: "openduet-offers-error",
+      error: error instanceof Error ? error.name : "UnknownError",
+      timestamp: new Date().toISOString(),
+    }),
+  );
+}
+
+type OfferDeps = NonNullable<IntakeDeps["offers"]>;
+
+/**
+ * Reads the pending offer alerts (at most five a run), then scores the new offers (at most ten) against
+ * the profile. Each attempt is counted and each failure kept as the row's state. Without a profile nothing
+ * is scored and no attempt is spent. Never throws: the sweep failing must not fail the intake. Mail text
+ * and the profile only live in memory for the prompts.
+ */
+async function offerSweep(deps: { offers: OfferDeps; call: Call }, ownerUserId: string, now: Date): Promise<void> {
+  try {
+    const { offers, call } = deps;
+    const { store } = offers;
+    const ask = (prompt: string) => askModel(offers.complete, prompt, offers.timeoutMs ?? OFFER_TIMEOUT_MS);
+    await store.skipOldSources(ownerUserId, now);
+    for (const source of await store.listDueSources(ownerUserId, now, MAX_OFFER_SOURCES_PER_RUN)) {
+      try {
+        // Pasted text is read inline by its route, never by this sweep.
+        if (!source.sourceKey.startsWith("gmail:") || source.platform === "paste") continue;
+        const claim = await store.claimSource(ownerUserId, source.id);
+        if (!claim?.claimedAt || claim.platform === "paste") continue;
+        try {
+          const read = (await call(GMAIL_READ, { id: claim.sourceKey.slice("gmail:".length) })) as { subject?: string; body?: string };
+          const subject = read.subject ?? "";
+          const body = read.body ?? "";
+          if (!htmlToText(body)) {
+            await store.skipSource(ownerUserId, claim.id, claim.claimedAt);
+            continue;
+          }
+          const { found } = await extractAndStore(store, ownerUserId, claim.id, claim.platform, { subject, body }, ask);
+          await store.completeSource(ownerUserId, claim.id, claim.claimedAt, found);
+        } catch (error) {
+          logOfferError(error);
+          await store.failSource(ownerUserId, claim.id, claim.claimedAt, error instanceof Error ? error.name : "UnknownError");
+        }
+      } catch (error) {
+        logOfferError(error);
+      }
+    }
+
+    const profile = await offers.profile.text(ownerUserId);
+    if (!profile) return;
+    for (const due of await store.listDueScores(ownerUserId, MAX_OFFER_SCORES_PER_RUN, now)) {
+      try {
+        await scoreOffer(store, ownerUserId, due.id, profile, ask, logOfferError);
+      } catch (error) {
+        logOfferError(error);
+      }
+    }
+  } catch (error) {
+    logOfferError(error);
   }
 }
