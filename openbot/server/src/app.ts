@@ -122,6 +122,7 @@ import type { ItemStore } from "./openduet/items/store";
 import type { PrepStore } from "./openduet/missions/prep-store";
 import { createCvRoutes } from "./openduet/job-offers/cv-routes";
 import { createOfferRoutes, type OfferRouteDeps } from "./openduet/job-offers/routes";
+import { createCareerRoutes, type CareerRouteDeps } from "./openduet/career/routes";
 import { createRevisionRoutes, type RevisionRouteDeps } from "./openduet/revision/routes";
 import { createMissionRoutes } from "./openduet/missions/routes";
 import type { MissionStore } from "./openduet/missions/store";
@@ -480,6 +481,8 @@ export function createApp(
       offers?: Omit<OfferRouteDeps, "missions">;
       /** Revision deck (A3c). Needs `items` and `offers` (focus) to be served. See openduet/revision. */
       revision?: Omit<RevisionRouteDeps, "items" | "offers">;
+      /** Weekly career check (A5). Read-only, computed in code. See openduet/career. */
+      career?: CareerRouteDeps;
       setup?: SetupSources;
       tasks?: TaskStore;
       intake?: TaskIntake;
@@ -1755,6 +1758,8 @@ export function createApp(
         requireUser,
       ),
     );
+  if (coworker?.openduet?.career)
+    app.route("/api/openduet/career", createCareerRoutes(coworker.openduet.career, requireUser));
   if (coworker?.openduet?.offers?.cv)
     app.route("/api/openduet/cv", createCvRoutes(coworker.openduet.offers.cv, requireUser));
   /*

@@ -6,7 +6,10 @@ import type { Database } from "../db/client";
 import { users } from "../db/schema";
 import { createProactiveStore } from "../proactive/store";
 import { ProactiveNotFoundError } from "../proactive/types";
-import { type BriefInterview, type BriefMission, type BriefOffer, type BriefRevision, buildMorningBrief, type CallTool, openduetTools } from "./brief";
+import { type BriefInterview, type BriefMission, type BriefOffer, type BriefRevision, type BriefWeekly, buildMorningBrief, type CallTool, openduetTools } from "./brief";
+import { createCareerStore, type CareerStore } from "./career/store";
+import { defaultWeek, parisWeekday } from "./career/week";
+import { summarizeWeek, weeklyBriefLines } from "./career/weekly";
 import { createOfferStore, type OfferStore } from "./job-offers/store";
 import { lastIntakeReport } from "./items/intake";
 import { parisDayAt } from "./items/paris-time";
@@ -111,6 +114,18 @@ export async function loadBriefRevision(
   const [next] = await focusOffers(deps, ownerUserId, now);
   if (!next?.offer.company) return { dueToday, newCount };
   return { dueToday, newCount, focus: { company: next.offer.company, skills: next.offer.skills.slice(0, 3) } };
+}
+
+/** The brief's weekly check: last completed week's lines on a Paris Monday, null on any other day. */
+export async function loadBriefWeekly(
+  store: Pick<CareerStore, "readWeek">,
+  ownerUserId: string,
+  now: Date,
+): Promise<BriefWeekly | null> {
+  if (parisWeekday(now) !== 1) return null;
+  const week = defaultWeek(now);
+  const check = summarizeWeek(await store.readWeek(ownerUserId, week, now), week, now);
+  return { week: week.label, lines: weeklyBriefLines(check) };
 }
 
 /** How a card the person asked for is told from research's: its run id starts with this. */
@@ -275,6 +290,7 @@ export function createOpenDuetTools(deps: {
   const preps = createPrepStore(deps.database);
   const offers = createOfferStore(deps.database);
   const revision = createRevisionStore(deps.database);
+  const career = createCareerStore(deps.database);
   return (actorId, botId, initiator) => [
     ...openduetTools({
       actorId,
@@ -297,6 +313,7 @@ export function createOpenDuetTools(deps: {
             interviews: (ownerUserId) => loadBriefInterviews(items, preps, ownerUserId, new Date()),
             offers: (ownerUserId) => loadBriefOffers(offers, ownerUserId, new Date()),
             revision: (ownerUserId) => loadBriefRevision({ revision, items, offers }, ownerUserId, new Date()),
+            weekly: (ownerUserId) => loadBriefWeekly(career, ownerUserId, new Date()),
           },
           input,
         ),
