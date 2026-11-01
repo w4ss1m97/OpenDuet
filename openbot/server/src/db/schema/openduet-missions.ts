@@ -114,7 +114,7 @@ export const openduetMissionEvents = pgTable(
     index("openduet_mission_events_mission_at_idx").on(table.missionId, table.at),
     check(
       "openduet_mission_events_type_check",
-      sql`${table.type} IN ('stage', 'inbound', 'relance_sent')`,
+      sql`${table.type} IN ('stage', 'inbound', 'relance_sent', 'debrief')`,
     ),
     check(
       "openduet_mission_events_source_check",
@@ -153,7 +153,7 @@ export const openduetMissionRelances = pgTable(
   ],
 );
 
-export type MissionEventType = "stage" | "inbound" | "relance_sent";
+export type MissionEventType = "stage" | "inbound" | "relance_sent" | "debrief";
 export type MissionEventSource = "mail" | "chat" | "app";
 export type RelanceStatus = "draft" | "sent" | "dismissed";
 

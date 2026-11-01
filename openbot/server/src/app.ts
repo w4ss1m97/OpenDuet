@@ -115,6 +115,8 @@ import {
   type DuetChannelStore,
 } from "./openduet/channels";
 import { createPageRoutes, type PageStore } from "./openduet/pages";
+import type { AnarlogSource } from "./openduet/missions/anarlog";
+import type { DebriefStore } from "./openduet/missions/debrief-store";
 import { createItemRoutes } from "./openduet/items/routes";
 import type { ItemStore } from "./openduet/items/store";
 import type { PrepStore } from "./openduet/missions/prep-store";
@@ -469,6 +471,8 @@ export function createApp(
       missions?: MissionStore;
       /** Interview prep sheets, served beside items and missions. See openduet/missions/prep-store.ts. */
       preps?: PrepStore;
+      /** Interview debriefs, served beside the prep sheets. `source` null: Anarlog is not set up. */
+      debrief?: { store: DebriefStore; source: AnarlogSource | null };
       setup?: SetupSources;
       tasks?: TaskStore;
       intake?: TaskIntake;
@@ -1722,7 +1726,7 @@ export function createApp(
         coworker.openduet.items,
         requireUser,
         coworker.openduet.missions && coworker.openduet.preps
-          ? { missions: coworker.openduet.missions, preps: coworker.openduet.preps }
+          ? { missions: coworker.openduet.missions, preps: coworker.openduet.preps, debrief: coworker.openduet.debrief }
           : undefined,
       ),
     );

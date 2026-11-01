@@ -5,6 +5,8 @@ import { Hono, type MiddlewareHandler } from "hono";
 import type { AppVariables } from "../src/auth/guards";
 import { createDatabase } from "../src/db/client";
 import { users } from "../src/db/schema/core";
+import type { AnarlogMeeting, AnarlogSource } from "../src/openduet/missions/anarlog";
+import { createDebriefStore } from "../src/openduet/missions/debrief-store";
 import { createPrepStore } from "../src/openduet/missions/prep-store";
 import { createMissionStore } from "../src/openduet/missions/store";
 import { loadBriefInterviews } from "../src/openduet/wiring";
@@ -30,7 +32,21 @@ const asActor: MiddlewareHandler<{ Variables: AppVariables }> = async (context, 
   context.set("actor", { id: actor } as AppVariables["actor"]);
   await next();
 };
-const app = new Hono().route("/api/openduet/items", createItemRoutes(store, asActor, { missions, preps }));
+const debriefs = createDebriefStore(database);
+let anarlog: AnarlogSource | null = null;
+const app = new Hono().route(
+  "/api/openduet/items",
+  createItemRoutes(store, asActor, {
+    missions,
+    preps,
+    debrief: {
+      store: debriefs,
+      get source() {
+        return anarlog;
+      },
+    },
+  }),
+);
 
 function request(actor: string | null, path: string, body?: unknown) {
   return app.request(`/api/openduet/items${path}`, {
@@ -209,4 +225,81 @@ test("loadBriefInterviews lists tomorrow's interviews in Paris with their sheet"
   } finally {
     await database.delete(users).where(inArray(users.id, [who]));
   }
+});
+
+// ---- Interview debrief ---------------------------------------------------------------------------
+
+const debriefContent = { summary: "s", positives: ["p"], concerns: [], nextSteps: ["n"], followUpBody: "Merci" };
+const pastInterview = async (who: string, missionId: string) => {
+  const id =
+    (await store.insertIfNew(
+      who,
+      { kind: "interview", title: "Entretien", dueAt: new Date(Date.now() - 3 * 3600_000), sourceApp: "gcal", sourceHash: `gcal:${randomUUID()}`, dateExplicit: true },
+      "active",
+      [],
+    ))?.id ?? "";
+  await store.setMission(who, id, missionId);
+  return id;
+};
+const recorded = (contact: string, start: Date, ready = true): AnarlogMeeting => ({
+  id: `m${randomUUID().slice(0, 8)}`,
+  title: "Entretien",
+  startedAt: start,
+  endedAt: new Date(start.getTime() + 3600_000),
+  participantEmails: [contact],
+  transcriptReady: ready,
+});
+const sourceOf = (meetings: AnarlogMeeting[]): AnarlogSource => ({
+  listMeetings: async () => meetings,
+  getMeeting: async (id) => meetings.find((m) => m.id === id) as AnarlogMeeting,
+  transcript: async () => ({ text: "", cut: false }),
+});
+
+test("GET debrief is 404 until a debrief exists, then status and content; 404 for someone else", async () => {
+  const missionId = await missionFor(owner);
+  const id = await pastInterview(owner, missionId);
+  expect((await request(owner, `/${id}/debrief`)).status).toBe(404);
+  await debriefs.ensurePending(owner, id, missionId, `m-${randomUUID()}`);
+  expect(await (await request(owner, `/${id}/debrief`)).json()).toMatchObject({ debrief: { status: "pending", content: null, missionId } });
+  const claim = await debriefs.claim(owner, id);
+  await debriefs.complete(owner, id, claim?.claimedAt as Date, debriefContent, new Date());
+  expect(await (await request(owner, `/${id}/debrief`)).json()).toMatchObject({ debrief: { status: "ready", content: debriefContent } });
+  expect((await request(other, `/${id}/debrief`)).status).toBe(404);
+});
+
+test("POST debrief/regenerate: another person's item is 404, an existing debrief is queued again (202)", async () => {
+  const missionId = await missionFor(owner);
+  const id = await pastInterview(owner, missionId);
+  expect((await request(other, `/${id}/debrief/regenerate`)).status).toBe(404);
+  await debriefs.ensurePending(owner, id, missionId, `m-${randomUUID()}`);
+  const claim = await debriefs.claim(owner, id);
+  await debriefs.fail(owner, id, claim?.claimedAt as Date, "TimeoutError");
+  const response = await request(owner, `/${id}/debrief/regenerate`);
+  expect(response.status).toBe(202);
+  expect(await response.json()).toMatchObject({ debrief: { status: "pending" } });
+});
+
+test("POST debrief/regenerate with no debrief: anarlog_off without a source, no_recording without a meeting, 202 with one", async () => {
+  const contact = `rh${randomUUID().slice(0, 8)}@routes-contact.test`;
+  const { mission } = await missions.createPiste(owner, { company: `Rt ${randomUUID()}`, review: "active", stage: "interview", contactEmail: contact });
+  const id = await pastInterview(owner, mission.id);
+
+  anarlog = null;
+  const off = await request(owner, `/${id}/debrief/regenerate`);
+  expect(off.status).toBe(503);
+  expect(await off.json()).toEqual({ error: "anarlog_off" });
+
+  anarlog = sourceOf([recorded("someone@else.test", new Date(Date.now() - 3 * 3600_000))]);
+  const none = await request(owner, `/${id}/debrief/regenerate`);
+  expect(none.status).toBe(404);
+  expect(await none.json()).toEqual({ error: "no_recording" });
+  expect(await debriefs.getByItem(owner, id)).toBeNull();
+
+  const meeting = recorded(contact, new Date(Date.now() - 3 * 3600_000));
+  anarlog = sourceOf([meeting]);
+  const queued = await request(owner, `/${id}/debrief/regenerate`);
+  expect(queued.status).toBe(202);
+  expect(await queued.json()).toMatchObject({ debrief: { status: "pending", missionId: mission.id } });
+  expect(await debriefs.getByItem(owner, id)).toMatchObject({ anarlogMeetingId: meeting.id, status: "pending" });
+  anarlog = null;
 });

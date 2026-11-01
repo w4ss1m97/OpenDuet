@@ -16,6 +16,8 @@ import { runIntake } from "./openduet/items/intake";
 import { localHostRunner } from "./openduet/items/local-runner";
 import { loadProjects } from "./openduet/items/project-scanner";
 import { createItemStore } from "./openduet/items/store";
+import { createAnarlogCli } from "./openduet/missions/anarlog";
+import { createDebriefStore } from "./openduet/missions/debrief-store";
 import { createPrepStore } from "./openduet/missions/prep-store";
 import { createMissionStore } from "./openduet/missions/store";
 import { createActivityStore } from "./activity/activity";
@@ -2323,6 +2325,23 @@ const prepComplete = createModelCompleter({
       environment: process.env,
     }),
 });
+const intakeDebriefs = createDebriefStore(database);
+// Null (feature off) unless OPENDUET_ANARLOG_BIN is an absolute path to an existing file.
+const anarlogSource = createAnarlogCli(process.env.OPENDUET_ANARLOG_BIN);
+// A transcript is long: same model as the sheets, a minute and a half.
+const debriefComplete = createModelCompleter({
+  model: runtimeModel,
+  maxTokens: 2048,
+  timeoutMs: 90_000,
+  resolveApiKey: () =>
+    resolveModelApiKey({
+      encryptionKey: config.keyEncryptionKey,
+      reader: credentialStore,
+      provider: runtimeModel.provider,
+      keyId: tenantPackage.model.credentialSecretRef,
+      environment: process.env,
+    }),
+});
 const intakeEveryone = async () => {
   const people = await database
     .selectDistinct({
@@ -2338,6 +2357,9 @@ const intakeEveryone = async () => {
           store: intakeItems,
           missions: intakeMissions,
           prep: { store: intakePreps, complete: prepComplete },
+          ...(anarlogSource
+            ? { debrief: { store: intakeDebriefs, source: anarlogSource, complete: debriefComplete } }
+            : {}),
           callTool: (input) => pluginStore.callTool(input),
           host: intakeHost,
           projects: intakeProjects,
@@ -2805,6 +2827,7 @@ const app = createApp(
       items: intakeItems,
       missions: intakeMissions,
       preps: intakePreps,
+      debrief: { store: intakeDebriefs, source: anarlogSource },
       // The checklist onboarding ends on. Facts and verdicts about this configuration, never values.
       setup: createSetupSources({
         productName: tenantPackage.productName,

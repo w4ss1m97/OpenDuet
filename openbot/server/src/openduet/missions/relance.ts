@@ -20,12 +20,36 @@ export function silenceAnchor(m: Pick<MissionClock, "stageEnteredAt" | "lastInbo
   return new Date(Math.max(...times.map((d) => d.getTime())));
 }
 
-/** `relancesInStage` is how many relances were already sent since the mission entered its stage. */
-export function relanceDue(m: MissionClock, now: Date, relancesInStage: number): boolean {
+/**
+ * Where the relance clock starts: the later of the last sign of life and the end of the last interview
+ * that took place. Used both to decide a relance is due and to key its window.
+ */
+export function relanceAnchor(
+  m: Pick<MissionClock, "stageEnteredAt" | "lastInboundAt" | "lastOutboundAt">,
+  lastEndedInterviewEnd: Date | null,
+): Date {
+  const silence = silenceAnchor(m);
+  return lastEndedInterviewEnd && lastEndedInterviewEnd > silence ? lastEndedInterviewEnd : silence;
+}
+
+export type InterviewFacts = { lastEndedInterviewEnd: Date | null; hasUpcomingInterview: boolean };
+
+/**
+ * `relancesInStage` is how many relances were already sent since the mission entered its stage. Stage
+ * `interview` is allowed only once a linked interview has ended and no later round is scheduled.
+ */
+export function relanceDue(
+  m: MissionClock,
+  now: Date,
+  relancesInStage: number,
+  interview: InterviewFacts = { lastEndedInterviewEnd: null, hasUpcomingInterview: false },
+): boolean {
   if (m.review !== "active") return false;
-  if (m.stage !== "applied" && m.stage !== "talking") return false;
+  if (m.stage === "interview") {
+    if (!interview.lastEndedInterviewEnd || interview.hasUpcomingInterview) return false;
+  } else if (m.stage !== "applied" && m.stage !== "talking") return false;
   if (relancesInStage >= MAX_RELANCES_PER_STAGE) return false;
-  return parisBusinessDaysSince(silenceAnchor(m), now) >= RELANCE_AFTER_BUSINESS_DAYS;
+  return parisBusinessDaysSince(relanceAnchor(m, interview.lastEndedInterviewEnd), now) >= RELANCE_AFTER_BUSINESS_DAYS;
 }
 
 export function relanceBody(m: { company: string; role: string | null }): string {

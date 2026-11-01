@@ -1,5 +1,17 @@
 import { proactiveInitiator } from "../../proactive/restriction";
 import { CALENDAR_LIST, type CallTool, displayName, GMAIL_READ, GMAIL_SEARCH } from "../brief";
+import type { AnarlogMeeting, AnarlogSource } from "../missions/anarlog";
+import {
+  DEBRIEF_MAX_AGE_MS,
+  DEBRIEF_MIN_AGE_MS,
+  MAX_DEBRIEFS_PER_RUN,
+  buildDebriefPrompt,
+  debriefDue,
+  matchMeeting,
+  parseDebrief,
+  startsInMatchWindow,
+} from "../missions/debrief";
+import type { DebriefStore } from "../missions/debrief-store";
 import { contactOf, missionSignal, namesCompany } from "../missions/mail-signal";
 import { MAX_PREPS_PER_RUN, PREP_WINDOW_MS, buildPrepPrompt, matchEventMission, parsePrep, prepDue } from "../missions/prep";
 import type { PrepStore } from "../missions/prep-store";
@@ -52,6 +64,8 @@ export type IntakeDeps = {
   missions?: MissionStore;
   /** Interview prep sheets. Needs `missions`; absent, no sheet is written. `timeoutMs` bounds one generation (60 s). */
   prep?: { store: PrepStore; complete: Complete; timeoutMs?: number };
+  /** Interview debriefs from Anarlog recordings. Needs `missions`; absent, no debrief is written. `timeoutMs` bounds one generation (90 s). */
+  debrief?: { store: DebriefStore; source: AnarlogSource; complete: Complete; timeoutMs?: number };
 };
 
 type ScanResult = {
@@ -312,6 +326,13 @@ export async function runIntake(
       }
     }),
   );
+  if (deps.missions && deps.debrief) {
+    await debriefSweep(
+      { missions: deps.missions, store: deps.store, debrief: deps.debrief, preps: deps.prep?.store },
+      ownerUserId,
+      now,
+    );
+  }
   if (deps.missions && !report.failed.some((f) => f.scanner === "mail")) {
     await relanceSweep(deps.missions, ownerUserId, now);
   }
@@ -326,7 +347,7 @@ export async function runIntake(
 /** A relance draft for each active mission that has been silent long enough. One failure does not stop the rest. */
 async function relanceSweep(missions: MissionStore, ownerUserId: string, now: Date): Promise<void> {
   try {
-    const waiting = await missions.list(ownerUserId, { open: true, review: ["active"], stage: ["applied", "talking"] });
+    const waiting = await missions.list(ownerUserId, { open: true, review: ["active"], stage: ["applied", "talking", "interview"] });
     for (const mission of waiting) {
       try {
         await missions.ensureRelance(ownerUserId, mission.id, now);
@@ -437,4 +458,119 @@ async function prepMails(call: Call, contacts: string[]): Promise<{ from: string
     mails.push({ from: read.from ?? m.from, subject: read.subject ?? m.subject, body: read.body ?? m.snippet });
   }
   return mails;
+}
+
+const DEBRIEF_TIMEOUT_MS = 90_000;
+const DEBRIEF_TRANSCRIPT_MS = 60_000;
+const LIST_MARGIN_MS = 15 * 60_000;
+
+function logDebriefError(error: unknown): void {
+  console.error(
+    JSON.stringify({
+      type: "openduet-debrief-error",
+      error: error instanceof Error ? error.name : "UnknownError",
+      timestamp: new Date().toISOString(),
+    }),
+  );
+}
+
+/**
+ * The Anarlog recording of this interview, once it has a finished transcript: null when no meeting, or
+ * several, fit. `used` holds the meetings other debriefs already own. `meetings` caches getMeeting calls.
+ */
+export async function findInterviewRecording(
+  source: AnarlogSource,
+  interview: { dueAt: Date | null },
+  mission: { contactEmails: string[] },
+  summaries: { id: string; startedAt: Date }[],
+  used: ReadonlySet<string>,
+  meetings: Map<string, AnarlogMeeting> = new Map(),
+): Promise<AnarlogMeeting | null> {
+  const candidates: AnarlogMeeting[] = [];
+  for (const summary of summaries) {
+    if (!startsInMatchWindow(interview, summary.startedAt)) continue;
+    let meeting = meetings.get(summary.id);
+    if (!meeting) {
+      meeting = await source.getMeeting(summary.id);
+      meetings.set(summary.id, meeting);
+    }
+    candidates.push(meeting);
+  }
+  return matchMeeting(interview, mission, candidates, used);
+}
+
+/**
+ * A debrief for each recent interview whose recording has a finished transcript: at most two generations
+ * a run, each attempt counted, each failure kept as the debrief's state. No due interview means no call
+ * to Anarlog at all. Never throws: the sweep failing must not fail the intake. The transcript is only
+ * held in memory for the prompt.
+ */
+async function debriefSweep(
+  deps: Required<Pick<IntakeDeps, "missions" | "store" | "debrief">> & { preps?: PrepStore },
+  ownerUserId: string,
+  now: Date,
+): Promise<void> {
+  try {
+    const { missions, debrief } = deps;
+    const ended = await deps.store.listEndedInterviews(
+      ownerUserId,
+      new Date(now.getTime() - DEBRIEF_MAX_AGE_MS),
+      new Date(now.getTime() - DEBRIEF_MIN_AGE_MS),
+    );
+    const due: { item: (typeof ended)[number]; mission: Awaited<ReturnType<MissionStore["get"]>>; ownMeeting: string | null }[] = [];
+    for (const item of ended) {
+      if (!item.missionId) continue;
+      const mission = await missions.get(ownerUserId, item.missionId).catch(() => null);
+      const current = await debrief.store.getByItem(ownerUserId, item.id);
+      if (mission && debriefDue(item, mission, current, now)) {
+        due.push({ item, mission, ownMeeting: current?.anarlogMeetingId ?? null });
+      }
+    }
+    if (due.length === 0) return;
+
+    const summaries = await debrief.source.listMeetings(new Date(now.getTime() - DEBRIEF_MAX_AGE_MS - LIST_MARGIN_MS));
+    const used = await debrief.store.listUsedMeetingIds(ownerUserId);
+    const meetings = new Map<string, AnarlogMeeting>();
+    let generated = 0;
+    for (const { item, mission, ownMeeting } of due) {
+      if (generated >= MAX_DEBRIEFS_PER_RUN) break;
+      try {
+        const others = new Set(used);
+        if (ownMeeting) others.delete(ownMeeting);
+        const meeting = await findInterviewRecording(debrief.source, item, mission, summaries, others, meetings);
+        if (!meeting || !meeting.transcriptReady) continue;
+        const row = await debrief.store.ensurePending(ownerUserId, item.id, mission.id, meeting.id);
+        if (!row) continue;
+        used.add(meeting.id);
+        const claim = await debrief.store.claim(ownerUserId, item.id);
+        if (!claim?.claimedAt) continue;
+        generated += 1;
+        try {
+          const transcript = await debrief.source.transcript(meeting.id, new Date(Date.now() + DEBRIEF_TRANSCRIPT_MS));
+          const sheet = deps.preps ? await deps.preps.getByItem(ownerUserId, item.id) : null;
+          const prompt = buildDebriefPrompt({
+            mission,
+            prep: sheet?.status === "ready" ? sheet.content : null,
+            transcript: transcript.text,
+            cut: transcript.cut,
+          });
+          const controller = new AbortController();
+          const text = await withDeadline(debrief.complete(prompt, controller.signal), debrief.timeoutMs ?? DEBRIEF_TIMEOUT_MS).catch(
+            (error) => {
+              controller.abort();
+              throw error;
+            },
+          );
+          await debrief.store.complete(ownerUserId, item.id, claim.claimedAt, parseDebrief(text), meeting.endedAt);
+        } catch (error) {
+          logDebriefError(error);
+          await debrief.store.fail(ownerUserId, item.id, claim.claimedAt, error instanceof Error ? error.name : "UnknownError");
+        }
+      } catch (error) {
+        logDebriefError(error);
+      }
+    }
+  } catch (error) {
+    logDebriefError(error);
+  }
 }

@@ -1,8 +1,12 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
 import type { AppVariables } from "../../auth/guards";
+import type { AnarlogSource } from "../missions/anarlog";
+import { DEBRIEF_MAX_AGE_MS, interviewEnd } from "../missions/debrief";
+import type { DebriefStore } from "../missions/debrief-store";
 import type { PrepStore } from "../missions/prep-store";
 import { MissionNotFoundError, type MissionStore } from "../missions/store";
+import { findInterviewRecording } from "./intake";
 import { ItemKindError, ItemNotFoundError, type ItemStore } from "./store";
 import { ITEM_STATUSES } from "./types";
 
@@ -24,7 +28,12 @@ export function createItemRoutes(
   store: ItemStore,
   requireUser: MiddlewareHandler<{ Variables: AppVariables }>,
   /** Interview prep. Absent, the mission link and the sheet routes are not served. */
-  prep?: { missions: Pick<MissionStore, "get">; preps: PrepStore },
+  prep?: {
+    missions: Pick<MissionStore, "get">;
+    preps: PrepStore;
+    /** Interview debriefs. `source` is null when Anarlog is not set up: reading works, finding a recording does not. */
+    debrief?: { store: DebriefStore; source: AnarlogSource | null };
+  },
 ) {
   const routes = new Hono<{ Variables: AppVariables }>();
   routes.use("*", requireUser);
@@ -102,6 +111,55 @@ export function createItemRoutes(
       const row = await preps.regenerate(context.var.actor.id, context.req.param("id"));
       if (!row) return context.json({ error: "Pas de fiche à refaire pour cet entretien." }, 404);
       return context.json({ prep: shown(row) });
+    });
+  }
+
+  if (prep?.debrief) {
+    const { missions } = prep;
+    const debrief = prep.debrief;
+    const debriefs = debrief.store;
+    const shown = (row: NonNullable<Awaited<ReturnType<DebriefStore["getByItem"]>>>) => ({
+      itemId: row.itemId,
+      missionId: row.missionId,
+      status: row.status,
+      content: row.content,
+      generatedAt: row.generatedAt,
+    });
+
+    routes.get("/:id/debrief", async (context) => {
+      const owner = context.var.actor.id;
+      const id = context.req.param("id");
+      await store.get(owner, id);
+      const row = await debriefs.getByItem(owner, id);
+      if (!row) return context.json({ error: "Pas encore de débrief pour cet entretien." }, 404);
+      return context.json({ debrief: shown(row) });
+    });
+
+    routes.post("/:id/debrief/regenerate", async (context) => {
+      const owner = context.var.actor.id;
+      const id = context.req.param("id");
+      const item = await store.get(owner, id);
+      const existing = await debriefs.regenerate(owner, id);
+      if (existing) return context.json({ debrief: shown(existing) }, 202);
+      const source = debrief.source;
+      if (!source) return context.json({ error: "anarlog_off" }, 503);
+      const end = interviewEnd(item);
+      const noRecording = () => context.json({ error: "no_recording" }, 404);
+      if (item.kind !== "interview" || !item.missionId || !item.dueAt || !end || end.getTime() > Date.now()) return noRecording();
+      const mission = await missions.get(owner, item.missionId);
+      const since = new Date(Math.max(item.dueAt.getTime(), Date.now() - DEBRIEF_MAX_AGE_MS) - 15 * 60_000);
+      const meeting = await findInterviewRecording(
+        source,
+        item,
+        mission,
+        await source.listMeetings(since),
+        await debriefs.listUsedMeetingIds(owner),
+      );
+      if (!meeting) return noRecording();
+      if (!meeting.transcriptReady) return context.json({ error: "transcript_not_ready" }, 409);
+      const row = await debriefs.ensurePending(owner, id, mission.id, meeting.id);
+      if (!row) return noRecording();
+      return context.json({ debrief: shown(row) }, 202);
     });
   }
 

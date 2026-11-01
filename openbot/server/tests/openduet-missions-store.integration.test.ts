@@ -5,6 +5,7 @@ import { createDatabase } from "../src/db/client";
 import { users } from "../src/db/schema/core";
 import { openduetItems } from "../src/db/schema/openduet-items";
 import { openduetMissionEvents, openduetMissions } from "../src/db/schema/openduet-missions";
+import { createDebriefStore } from "../src/openduet/missions/debrief-store";
 import { parisDate } from "../src/openduet/items/paris-time";
 import { createItemStore } from "../src/openduet/items/store";
 import {
@@ -258,6 +259,82 @@ test("relances: one per silence window, none past two per stage, sent moves the 
   expect(second?.id).not.toBe(first?.id);
   await store.setRelanceStatus(owner, m.id, second!.id, "sent", parisDate(2026, 11, 16, 9));
   expect(await store.ensureRelance(owner, m.id, parisDate(2026, 12, 7, 9))).toBeNull();
+});
+
+async function interviewMission() {
+  const { mission } = await store.createPiste(owner, { company: `Acme ${randomUUID()}`, review: "active", stage: "interview" });
+  await database.execute(
+    sql`UPDATE openduet_missions SET stage_entered_at = ${parisDate(2026, 10, 1, 9).toISOString()}::timestamptz WHERE id = ${mission.id}`,
+  );
+  return mission;
+}
+async function linkedInterview(missionId: string, dueAt: Date, status: "active" | "done" = "active") {
+  const item = await itemStore.insertIfNew(owner, { kind: "interview", title: "Entretien", dueAt, sourceApp: "gcal", sourceHash: `gcal:${randomUUID()}`, dateExplicit: true }, status, []);
+  if (!item) throw new Error("not inserted");
+  await database.update(openduetItems).set({ missionId }).where(eq(openduetItems.id, item.id));
+  return item;
+}
+
+test("relances, interview stage: due 5 business days after the interview ended, never before or without one", async () => {
+  const m = await interviewMission();
+  expect(await store.ensureRelance(owner, m.id, parisDate(2026, 11, 20, 9))).toBeNull();
+  await linkedInterview(m.id, parisDate(2026, 11, 2, 10));
+  expect(await store.ensureRelance(owner, m.id, parisDate(2026, 11, 6, 12))).toBeNull();
+  const relance = await store.ensureRelance(owner, m.id, parisDate(2026, 11, 9, 12));
+  expect(relance?.status).toBe("draft");
+  expect(relance?.body).toContain("Bonjour");
+  expect(relance?.windowStart.getTime()).toBe(parisDate(2026, 11, 2, 11).getTime());
+  expect((await store.ensureRelance(owner, m.id, parisDate(2026, 11, 10, 12)))?.id).toBe(relance?.id);
+});
+
+test("relances, interview stage: an interview marked done still counts, a done future one does not block", async () => {
+  const m = await interviewMission();
+  await linkedInterview(m.id, parisDate(2026, 11, 2, 10), "done");
+  await linkedInterview(m.id, parisDate(2026, 11, 20, 10), "done");
+  const relance = await store.ensureRelance(owner, m.id, parisDate(2026, 11, 9, 12));
+  expect(relance?.windowStart.getTime()).toBe(parisDate(2026, 11, 2, 11).getTime());
+});
+
+test("relances, interview stage: none while a next round is scheduled", async () => {
+  const m = await interviewMission();
+  await linkedInterview(m.id, parisDate(2026, 11, 2, 10));
+  await linkedInterview(m.id, parisDate(2026, 11, 20, 10));
+  expect(await store.ensureRelance(owner, m.id, parisDate(2026, 11, 9, 12))).toBeNull();
+});
+
+test("relances: a ready debrief's follow-up becomes the body, and a draft body is refreshed but not a sent one", async () => {
+  const m = await interviewMission();
+  const item = await linkedInterview(m.id, parisDate(2026, 11, 2, 10));
+  const first = await store.ensureRelance(owner, m.id, parisDate(2026, 11, 9, 12));
+  expect(first?.body).toContain("Bonjour");
+  const generic = first?.body;
+
+  const debriefs = createDebriefStore(database);
+  await debriefs.ensurePending(owner, item.id, m.id, `m-${randomUUID()}`);
+  const claim = await debriefs.claim(owner, item.id);
+  await debriefs.complete(owner, item.id, claim?.claimedAt as Date, { summary: "s", positives: [], concerns: [], nextSteps: [], followUpBody: "Merci pour l'entretien" }, parisDate(2026, 11, 2, 11));
+
+  const refreshed = await store.ensureRelance(owner, m.id, parisDate(2026, 11, 10, 12));
+  expect(refreshed?.id).toBe(first?.id);
+  expect(refreshed?.body).toBe("Merci pour l'entretien");
+  expect(refreshed?.body).not.toBe(generic);
+
+  await store.setRelanceStatus(owner, m.id, refreshed!.id, "sent", parisDate(2026, 11, 10, 12));
+  await database.execute(sql`UPDATE openduet_interview_debriefs SET content = jsonb_set(content, '{followUpBody}', '"Autre"') WHERE item_id = ${item.id}`);
+  const after = await database.execute(sql`SELECT body, status FROM openduet_mission_relances WHERE id = ${refreshed!.id}`);
+  expect(after[0]).toMatchObject({ body: "Merci pour l'entretien", status: "sent" });
+  await store.ensureRelance(owner, m.id, parisDate(2026, 11, 11, 12));
+  const still = await database.execute(sql`SELECT body, status FROM openduet_mission_relances WHERE id = ${refreshed!.id}`);
+  expect(still[0]).toMatchObject({ body: "Merci pour l'entretien", status: "sent" });
+});
+
+test("relances: an applied mission is relanced as before, whatever interview is scheduled later", async () => {
+  const m = await applied();
+  await database.execute(
+    sql`UPDATE openduet_missions SET stage_entered_at = ${parisDate(2026, 11, 2, 9).toISOString()}::timestamptz WHERE id = ${m.id}`,
+  );
+  await linkedInterview(m.id, parisDate(2026, 11, 20, 10));
+  expect(await store.ensureRelance(owner, m.id, parisDate(2026, 11, 9, 9))).not.toBeNull();
 });
 
 test("a person never sees or moves another person's mission", async () => {
