@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gte, inArray, notInArray, sql, type SQL } from "drizzle-orm";
 import type { Database } from "../../db/client";
+import { openduetInterviewDebriefs } from "../../db/schema/openduet-interview-debriefs";
 import { openduetItems } from "../../db/schema/openduet-items";
 import {
   type MissionEventSource,
@@ -13,7 +14,8 @@ import {
   openduetMissions,
 } from "../../db/schema/openduet-missions";
 import { companyKey, contactOf } from "./mail-signal";
-import { relanceBody, relanceDue, silenceAnchor } from "./relance";
+import { interviewEnd } from "./debrief";
+import { type InterviewFacts, relanceAnchor, relanceBody, relanceDue } from "./relance";
 import { type Review, type Stage, canTransition, isTerminal } from "./stages";
 
 export class MissionNotFoundError extends Error {
@@ -447,19 +449,54 @@ export function createMissionStore(db: Database) {
             gte(openduetMissionEvents.at, mission.stageEnteredAt),
           ),
         ) as [{ sent: number }];
-      if (!relanceDue(mission, now, sent)) return null;
-      const windowStart = silenceAnchor(mission);
+      const linked = await db
+        .select()
+        .from(openduetItems)
+        .where(
+          and(
+            eq(openduetItems.ownerUserId, ownerUserId),
+            eq(openduetItems.missionId, id),
+            eq(openduetItems.kind, "interview"),
+            inArray(openduetItems.status, ["active", "done"]),
+          ),
+        );
+      let lastEnded: (typeof linked)[number] | null = null;
+      let lastEndedAt: Date | null = null;
+      let hasUpcomingInterview = false;
+      for (const item of linked) {
+        const end = interviewEnd(item);
+        if (!item.dueAt || !end) continue;
+        if (item.dueAt > now && item.status === "active") hasUpcomingInterview = true;
+        if (end <= now && (!lastEndedAt || end > lastEndedAt)) {
+          lastEnded = item;
+          lastEndedAt = end;
+        }
+      }
+      const facts: InterviewFacts = { lastEndedInterviewEnd: lastEndedAt, hasUpcomingInterview };
+      if (!relanceDue(mission, now, sent, facts)) return null;
+      const windowStart = relanceAnchor(mission, facts.lastEndedInterviewEnd);
+      let body = relanceBody(mission);
+      if (lastEnded) {
+        const [debrief] = await db
+          .select({ content: openduetInterviewDebriefs.content })
+          .from(openduetInterviewDebriefs)
+          .where(
+            and(
+              eq(openduetInterviewDebriefs.ownerUserId, ownerUserId),
+              eq(openduetInterviewDebriefs.itemId, lastEnded.id),
+              eq(openduetInterviewDebriefs.status, "ready"),
+            ),
+          );
+        if (debrief?.content?.followUpBody) body = debrief.content.followUpBody;
+      }
       await db
         .insert(openduetMissionRelances)
-        .values({
-          id: randomUUID(),
-          missionId: id,
-          ownerUserId,
-          windowStart,
-          body: relanceBody(mission),
-          status: "draft",
-        })
-        .onConflictDoNothing();
+        .values({ id: randomUUID(), missionId: id, ownerUserId, windowStart, body, status: "draft" })
+        .onConflictDoUpdate({
+          target: [openduetMissionRelances.missionId, openduetMissionRelances.windowStart],
+          set: { body },
+          setWhere: eq(openduetMissionRelances.status, "draft"),
+        });
       const [row] = await db
         .select()
         .from(openduetMissionRelances)

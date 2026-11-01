@@ -128,6 +128,25 @@ export function createItemStore(db: Database) {
         .orderBy(openduetItems.dueAt);
     },
 
+    /** Active interview items linked to a mission and due in [from, to), oldest first: the candidates for a debrief. */
+    async listEndedInterviews(ownerUserId: string, from: Date, to: Date): Promise<OpenduetItem[]> {
+      return db
+        .select()
+        .from(openduetItems)
+        .where(
+          and(
+            eq(openduetItems.ownerUserId, ownerUserId),
+            eq(openduetItems.kind, "interview"),
+            // An interview that happened is often marked done: it still gets its debrief.
+            inArray(openduetItems.status, ["active", "done"]),
+            sql`${openduetItems.missionId} IS NOT NULL`,
+            gte(openduetItems.dueAt, from),
+            lt(openduetItems.dueAt, to),
+          ),
+        )
+        .orderBy(openduetItems.dueAt);
+    },
+
     async list(ownerUserId: string, q: ItemQuery = {}): Promise<OpenduetItem[]> {
       const where: SQL[] = [eq(openduetItems.ownerUserId, ownerUserId)];
       if (q.status?.length) where.push(inArray(openduetItems.status, q.status));

@@ -69,3 +69,36 @@ test("relanceBody is a short French note naming the role and company", () => {
   expect(body).toMatch(/Bonjour/);
   expect(relanceBody({ ...base, role: null })).not.toContain("null");
 });
+
+import { relanceAnchor } from "../src/openduet/missions/relance";
+
+const noInterview = { lastEndedInterviewEnd: null, hasUpcomingInterview: false };
+
+test("relanceAnchor is the later of the silence anchor and the last ended interview", () => {
+  expect(relanceAnchor(base, null)).toEqual(base.stageEnteredAt);
+  const later = parisDate(2026, 11, 4, 15);
+  expect(relanceAnchor(base, later)).toEqual(later);
+  expect(relanceAnchor({ ...base, lastInboundAt: parisDate(2026, 11, 5, 9) }, later)).toEqual(parisDate(2026, 11, 5, 9));
+});
+
+test("relanceDue keeps applied and talking as before when given no interview facts", () => {
+  expect(relanceDue(base, friday, 0, noInterview)).toBe(false);
+  expect(relanceDue(base, monday, 0, noInterview)).toBe(true);
+  expect(relanceDue({ ...base, stage: "talking" }, monday, 0, noInterview)).toBe(true);
+});
+
+test("relanceDue: an interview stage needs an ended interview and no upcoming one", () => {
+  const m = { ...base, stage: "interview" as const };
+  const ended = parisDate(2026, 11, 2, 15); // Monday
+  expect(relanceDue(m, monday, 0, noInterview)).toBe(false);
+  expect(relanceDue(m, monday, 0, { lastEndedInterviewEnd: ended, hasUpcomingInterview: false })).toBe(true);
+  expect(relanceDue(m, monday, 0, { lastEndedInterviewEnd: ended, hasUpcomingInterview: true })).toBe(false);
+});
+
+test("relanceDue counts five business days from the interview end, not the stage entry", () => {
+  const m = { ...base, stage: "interview" as const };
+  const ended = parisDate(2026, 11, 4, 15); // Wednesday
+  expect(relanceDue(m, parisDate(2026, 11, 10, 9), 0, { lastEndedInterviewEnd: ended, hasUpcomingInterview: false })).toBe(false);
+  expect(relanceDue(m, parisDate(2026, 11, 11, 9), 0, { lastEndedInterviewEnd: ended, hasUpcomingInterview: false })).toBe(true);
+  expect(relanceDue(m, parisDate(2026, 11, 11, 9), 2, { lastEndedInterviewEnd: ended, hasUpcomingInterview: false })).toBe(false);
+});
