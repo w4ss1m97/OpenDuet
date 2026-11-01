@@ -12,7 +12,7 @@ export type SpawnedProcess = {
 
 export type Spawn = (argv: string[], options: { env: Record<string, string> }) => SpawnedProcess;
 
-export type RunDeps = { spawn?: Spawn; timeoutMs?: number };
+export type RunDeps = { spawn?: Spawn; timeoutMs?: number; maxStdoutBytes?: number };
 
 /** Every git call starts with these: no index locks, no fsmonitor or hooks from the repo, no transports. */
 export const GIT_FLAGS = [
@@ -25,6 +25,7 @@ export const GIT_FLAGS = [
 const GIT_TIMEOUT_MS = 10_000;
 const GH_TIMEOUT_MS = 25_000;
 const MAX_STDOUT_BYTES = 1024 * 1024;
+const MAX_STDOUT_CEILING = 8 * 1024 * 1024;
 const SLUG_SHAPE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 /** `owner/repo`; a part made only of dots or starting with a dash is not a GitHub name. */
@@ -46,6 +47,60 @@ function fixedEnv(): Record<string, string> {
   };
 }
 
+const same = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+const OID = /^[0-9a-f]{40}$/;
+const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+/** A ref or branch name made of plain characters: never starts with a dash, no `..`. */
+const isRefName = (name: string) => /^[A-Za-z0-9._/-]+$/.test(name) && !name.startsWith("-") && !name.includes("..");
+
+/** The exact git subcommand shapes the cockpit makes (args after `-C <dir>`). */
+function gitArgsAllowed(a: string[]): boolean {
+  const [cmd, ...rest] = a;
+  switch (cmd) {
+    case "symbolic-ref":
+      return same(rest, ["--short", "refs/remotes/origin/HEAD"]);
+    case "rev-parse":
+      return (
+        same(rest, ["--git-dir"]) ||
+        same(rest, ["--abbrev-ref", "HEAD"]) ||
+        same(rest, ["--abbrev-ref", "@{u}"]) ||
+        (rest.length === 3 && rest[0] === "--verify" && rest[1] === "-q" &&
+          (rest[2]!.startsWith("refs/remotes/origin/") || rest[2]!.startsWith("refs/heads/")) && isRefName(rest[2]!))
+      );
+    case "status":
+      return same(rest, ["--porcelain=v1", "-z", "--untracked-files=normal"]);
+    case "worktree":
+      return same(rest, ["list", "--porcelain"]);
+    case "remote":
+      return same(rest, ["get-url", "origin"]);
+    case "rev-list": {
+      if (same(rest, ["--count", "HEAD..@{u}"]) || same(rest, ["--count", "HEAD", "--not", "--remotes"])) return true;
+      if (rest.length === 2 && rest[0] === "--count") {
+        const parts = rest[1]!.split("..");
+        return parts.length === 2 && parts.every((p) => p !== "" && isRefName(p));
+      }
+      return false;
+    }
+    case "log":
+      return (
+        same(rest, ["-15", "--format=%H%x1f%ct%x1f%an%x1f%s"]) ||
+        same(rest, ["-8", "--format=%ct%x1f%h%x1f%s", "--", ".claude/session-notes.md"])
+      );
+    case "ls-tree":
+      return same(rest, ["-r", "-l", "-z", "--full-tree", "HEAD"]);
+    case "cat-file":
+      return rest.length === 2 && rest[0] === "blob" && OID.test(rest[1]!);
+    case "diff":
+      return same(rest, ["--numstat", "-z", "--no-ext-diff", "--no-textconv", "--no-renames", EMPTY_TREE, "HEAD"]);
+    case "for-each-ref":
+      return same(rest, [
+        "--sort=-creatordate", "--count=30", "--format=%(refname:short)%09%(creatordate:unix)%09%(objectname)", "refs/tags",
+      ]);
+    default:
+      return false;
+  }
+}
+
 /** Whether argv is a call the cockpit is allowed to make; the check runs before anything spawns. */
 function allowed(argv: string[]): boolean {
   if (argv.some((part) => typeof part !== "string" || part.includes("\0"))) return false;
@@ -58,7 +113,7 @@ function allowed(argv: string[]): boolean {
       argv[1 + GIT_FLAGS.length] === "-C" &&
       typeof dir === "string" &&
       dir.startsWith("/") &&
-      argv.length > 1 + GIT_FLAGS.length + 2
+      gitArgsAllowed(argv.slice(1 + GIT_FLAGS.length + 2))
     );
   }
   if (argv[0] === "gh") {
@@ -66,15 +121,16 @@ function allowed(argv: string[]): boolean {
       return isSlug(argv[4] ?? "");
     }
     if (argv[1] === "api" && argv.length === 3) {
-      const match = /^repos\/([^/]+\/[^/]+)\/actions\/runs\?per_page=30$/.exec(argv[2] ?? "");
-      return match !== null && isSlug(match[1]!);
+      const match = /^repos\/([^/]+\/[^/]+)\/(?:actions\/runs|releases)\?per_page=(\d+)$/.exec(argv[2] ?? "");
+      if (match === null || !isSlug(match[1]!)) return false;
+      return argv[2]!.includes("/actions/runs?") ? match[2] === "30" : match[2] === "20";
     }
   }
   return false;
 }
 
-/** Reads at most MAX_STDOUT_BYTES; null when the stream says more. */
-async function readCapped(stream: ReadableStream<Uint8Array>): Promise<string | null> {
+/** Reads at most `limit` bytes; null when the stream says more. */
+async function readCapped(stream: ReadableStream<Uint8Array>, limit: number): Promise<string | null> {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -82,7 +138,7 @@ async function readCapped(stream: ReadableStream<Uint8Array>): Promise<string | 
     const { done, value } = await reader.read();
     if (done) break;
     size += value.byteLength;
-    if (size > MAX_STDOUT_BYTES) return null;
+    if (size > limit) return null;
     chunks.push(value);
   }
   return Buffer.concat(chunks).toString("utf8");
@@ -92,6 +148,8 @@ async function readCapped(stream: ReadableStream<Uint8Array>): Promise<string | 
 export async function runAllowed(argv: string[], deps: RunDeps = {}): Promise<string | null> {
   if (!allowed(argv)) return null;
   const timeoutMs = deps.timeoutMs ?? (argv[0] === "gh" ? GH_TIMEOUT_MS : GIT_TIMEOUT_MS);
+  const requested = deps.maxStdoutBytes;
+  const limit = Number.isFinite(requested) && requested! > 0 ? Math.min(requested!, MAX_STDOUT_CEILING) : MAX_STDOUT_BYTES;
   let proc: SpawnedProcess;
   try {
     proc = (deps.spawn ?? realSpawn)(argv, { env: fixedEnv() });
@@ -108,7 +166,7 @@ export async function runAllowed(argv: string[], deps: RunDeps = {}): Promise<st
     }, timeoutMs);
   });
   try {
-    const out = await Promise.race([readCapped(proc.stdout), timeout]);
+    const out = await Promise.race([readCapped(proc.stdout, limit), timeout]);
     if (out === null) {
       // Too much output, or out of time: make sure the process is gone.
       proc.kill("SIGKILL");
