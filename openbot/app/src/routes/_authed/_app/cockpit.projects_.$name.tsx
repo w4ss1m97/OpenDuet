@@ -1,16 +1,16 @@
 import { IconCheck, IconCopy } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { Fragment, useState } from "react";
 import {
   AttentionRow,
-  Chip,
-  CockpitProblem,
-  External,
   agoMillis,
   agoSeconds,
+  Chip,
+  CockpitProblem,
   checksLabel,
   checksTone,
+  External,
   runState,
 } from "@/components/cockpit/parts";
 import {
@@ -94,7 +94,23 @@ function CockpitProject() {
 
   return (
     <PageShell
-      action={<CopyResume text={resumePrompt(p)} />}
+      action={
+        <div className="flex items-center gap-2">
+          <Button
+            render={
+              <Link
+                params={{ name: p.name }}
+                to="/cockpit/projects/$name/explore"
+              />
+            }
+            size="lg"
+            variant="outline"
+          >
+            Explore
+          </Button>
+          <CopyResume text={resumePrompt(p)} />
+        </div>
+      }
       backButton={backButton}
       description={`${p.path} · ${p.branch}${p.ahead ? ` · ${p.ahead} ahead` : ""}${p.behind ? ` · ${p.behind} behind` : ""}${p.dirty?.count ? ` · ${p.dirty.count} uncommitted` : ""}`}
       title={p.name}
