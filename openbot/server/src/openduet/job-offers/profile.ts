@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
+import type { CvStore } from "./cv-store";
+import { masterToText } from "./cv-tailor";
 
 /** Where the freelancer's profile text comes from. A DB-backed source can replace the file one later. */
 export interface ProfileSource {
@@ -23,6 +25,16 @@ export function createFileProfileSource(path: string | undefined): ProfileSource
       } catch {
         return null;
       }
+    },
+  };
+}
+
+/** The master CV in the database when the owner has one, else `fallback` (the file). */
+export function createDbProfileSource(cvStore: Pick<CvStore, "getMaster">, fallback: ProfileSource): ProfileSource {
+  return {
+    async text(ownerUserId) {
+      const master = await cvStore.getMaster(ownerUserId);
+      return master ? masterToText(master.content).slice(0, MAX_PROFILE_CHARS) : fallback.text(ownerUserId);
     },
   };
 }

@@ -19,7 +19,9 @@ import { createItemStore } from "./openduet/items/store";
 import { createAnarlogCli } from "./openduet/missions/anarlog";
 import { createDebriefStore } from "./openduet/missions/debrief-store";
 import { createOfferStore } from "./openduet/job-offers/store";
-import { createFileProfileSource } from "./openduet/job-offers/profile";
+import { createCvStore } from "./openduet/job-offers/cv-store";
+import { createPdfRenderer } from "./openduet/job-offers/cv-render";
+import { createDbProfileSource, createFileProfileSource } from "./openduet/job-offers/profile";
 import { createPrepStore } from "./openduet/missions/prep-store";
 import { createMissionStore } from "./openduet/missions/store";
 import { createActivityStore } from "./activity/activity";
@@ -2329,7 +2331,11 @@ const prepComplete = createModelCompleter({
 });
 const intakeOffers = createOfferStore(database);
 // Null profile (scoring off) unless OPENDUET_PROFILE_PATH is an absolute path to an existing file.
-const offerProfile = createFileProfileSource(process.env.OPENDUET_PROFILE_PATH);
+// A master CV stored in the database wins over the file.
+const cvStore = createCvStore(database);
+const offerProfile = createDbProfileSource(cvStore, createFileProfileSource(process.env.OPENDUET_PROFILE_PATH));
+// PDFs of tailored CVs: OPENDUET_CHROME_BIN is an absolute path to Chrome; unset = the PDF routes answer 503.
+const cvDeps = { store: cvStore, render: createPdfRenderer(process.env.OPENDUET_CHROME_BIN), complete: prepComplete };
 const intakeDebriefs = createDebriefStore(database);
 // Null (feature off) unless OPENDUET_ANARLOG_BIN is an absolute path to an existing file.
 const anarlogSource = createAnarlogCli(process.env.OPENDUET_ANARLOG_BIN);
@@ -2834,7 +2840,7 @@ const app = createApp(
       missions: intakeMissions,
       preps: intakePreps,
       debrief: { store: intakeDebriefs, source: anarlogSource },
-      offers: { store: intakeOffers, profile: offerProfile, complete: prepComplete },
+      offers: { store: intakeOffers, profile: offerProfile, complete: prepComplete, cv: cvDeps },
       // The checklist onboarding ends on. Facts and verdicts about this configuration, never values.
       setup: createSetupSources({
         productName: tenantPackage.productName,

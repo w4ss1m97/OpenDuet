@@ -120,6 +120,7 @@ import type { DebriefStore } from "./openduet/missions/debrief-store";
 import { createItemRoutes } from "./openduet/items/routes";
 import type { ItemStore } from "./openduet/items/store";
 import type { PrepStore } from "./openduet/missions/prep-store";
+import { createCvRoutes } from "./openduet/job-offers/cv-routes";
 import { createOfferRoutes, type OfferRouteDeps } from "./openduet/job-offers/routes";
 import { createMissionRoutes } from "./openduet/missions/routes";
 import type { MissionStore } from "./openduet/missions/store";
@@ -1743,6 +1744,8 @@ export function createApp(
       "/api/openduet/offers",
       createOfferRoutes({ ...coworker.openduet.offers, missions: coworker.openduet.missions }, requireUser),
     );
+  if (coworker?.openduet?.offers?.cv)
+    app.route("/api/openduet/cv", createCvRoutes(coworker.openduet.offers.cv, requireUser));
   /*
    * Signed in, unlike `/api/capabilities`, which anybody can read. The checklist names what this
    * deployment has and lacks, and for an admin which variables would close a gap, which is not a
