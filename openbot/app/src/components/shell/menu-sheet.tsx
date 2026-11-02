@@ -341,6 +341,15 @@ export function MenuSheet({
               activeProps={{ className: "bg-duet-tile" }}
               className={ROW}
               onClick={close}
+              to="/guide"
+            >
+              <RowIcon name="question" />
+              Guide
+            </Link>
+            <Link
+              activeProps={{ className: "bg-duet-tile" }}
+              className={ROW}
+              onClick={close}
               to="/cockpit/usage"
             >
               <RowIcon name="activity" />
