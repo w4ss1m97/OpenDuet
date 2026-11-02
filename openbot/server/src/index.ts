@@ -19,6 +19,7 @@ import { createItemStore } from "./openduet/items/store";
 import { createAnarlogCli } from "./openduet/missions/anarlog";
 import { createDebriefStore } from "./openduet/missions/debrief-store";
 import { createOfferStore } from "./openduet/job-offers/store";
+import { createCareerStore } from "./openduet/career/store";
 import { createRevisionStore } from "./openduet/revision/store";
 import { createRevisionGenerator } from "./openduet/revision/generate";
 import { createCvStore } from "./openduet/job-offers/cv-store";
@@ -2885,6 +2886,7 @@ const app = createApp(
       debrief: { store: intakeDebriefs, source: anarlogSource },
       offers: { store: intakeOffers, profile: offerProfile, complete: listComplete, cv: cvDeps, revision: revisionGenerator },
       revision: { store: revisionStore, generator: revisionGenerator, cv: cvStore },
+      career: { store: createCareerStore(database) },
       mailDrafts: {
         store: createMailDraftStore(database),
         missions: intakeMissions,

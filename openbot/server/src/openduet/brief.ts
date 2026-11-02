@@ -83,6 +83,9 @@ export type BriefRevision = {
   focus?: { company: string; skills: string[] };
 };
 
+/** Last week's career check on a Monday: French lines, counts only. */
+export type BriefWeekly = { week: string; lines: string[] };
+
 export type MorningBrief = {
   /** ISO 8601, when the brief was made. */
   at: string;
@@ -99,6 +102,8 @@ export type MorningBrief = {
   offers: BriefOffer[];
   /** Revision cards to review; absent when the deck is empty, or when it could not be read (see couldNotCheck). */
   revision?: BriefRevision;
+  /** Monday only: the last completed week's career check; absent otherwise, or when it could not be read (see couldNotCheck). */
+  weekly?: BriefWeekly;
   /** Each source that could not be read, and why, in words the person can act on. */
   couldNotCheck: { source: string; why: string }[];
   checked: { mail: number; byRules: number; byModel: number };
@@ -230,6 +235,8 @@ export async function buildMorningBrief(
     offers?: (ownerUserId: string) => Promise<BriefOffer[]>;
     /** Reads this person's revision deck. Null: nothing to revise. Absent, the brief has no revision section. */
     revision?: (ownerUserId: string) => Promise<BriefRevision | null>;
+    /** Reads last week's career check. Null: not a Monday. Absent, the brief has no weekly section. */
+    weekly?: (ownerUserId: string) => Promise<BriefWeekly | null>;
   },
   input: {
     actorId: string;
@@ -394,6 +401,14 @@ export async function buildMorningBrief(
       couldNotCheck.push({ source: "Révision", why: why(error) });
     }
   }
+  if (deps.weekly) {
+    try {
+      const weekly = await deps.weekly(input.actorId);
+      if (weekly) brief.weekly = weekly;
+    } catch (error) {
+      couldNotCheck.push({ source: "Bilan hebdo", why: why(error) });
+    }
+  }
   return brief;
 }
 
@@ -422,6 +437,7 @@ export function openduetTools(options: {
       description: [
         "Build the person's morning brief from their connected Gmail and Google Calendar: what needs them today, each with a one-line reason, what can wait, today's calendar, and what could not be checked and why.",
         "The app shows the result as a card, so do not repeat it. After calling it, write at most two short sentences: the most important thing, and one offer of help, such as drafting a reply.",
+        "On Mondays, `weekly` holds last week's career check; mention its most telling line at most.",
         "Never claim to have checked a source listed under couldNotCheck; say what is missing and how to connect it.",
       ].join(" "),
       parameters,

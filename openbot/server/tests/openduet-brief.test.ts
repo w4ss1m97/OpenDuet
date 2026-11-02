@@ -10,6 +10,7 @@ import {
   inboxOwner,
   openduetTools,
 } from "../src/openduet/brief";
+import { loadBriefWeekly } from "../src/openduet/wiring";
 
 const NOW = new Date("2026-10-22T14:30:00Z");
 const INITIATOR = { kind: "person" } as const;
@@ -479,5 +480,45 @@ describe("the morning_brief tool", () => {
     ).toBe("Maya");
     expect(await tool?.execute({ since: "forever" })).toStartWith("Refused.");
     expect(built).toBe(1);
+  });
+});
+
+describe("morning brief weekly section", () => {
+  const complete = async () => '{"verdict":"can_wait","reason":"Routine."}';
+
+  test("is absent without a loader or when the loader says null", async () => {
+    const { callTool } = connector();
+    expect((await buildMorningBrief({ callTool, model: "m", now: () => NOW, complete }, input)).weekly).toBeUndefined();
+    const none = await buildMorningBrief({ callTool, model: "m", now: () => NOW, complete, weekly: async () => null }, input);
+    expect(none.weekly).toBeUndefined();
+    expect(none.couldNotCheck).toEqual([]);
+  });
+
+  test("carries what the loader returns", async () => {
+    const { callTool } = connector();
+    const value = { week: "2026-10-26", lines: ["Semaine du 26/10 : 1 relance envoyée."] };
+    const brief = await buildMorningBrief({ callTool, model: "m", now: () => NOW, complete, weekly: async () => value }, input);
+    expect(brief.weekly).toEqual(value);
+  });
+
+  test("a loader that fails is named Bilan hebdo", async () => {
+    const { callTool } = connector();
+    const brief = await buildMorningBrief(
+      { callTool, model: "m", now: () => NOW, complete, weekly: async () => { throw new Error("db down"); } },
+      input,
+    );
+    expect(brief.couldNotCheck).toEqual([{ source: "Bilan hebdo", why: "db down" }]);
+  });
+
+  test("loadBriefWeekly reads only on a Paris Monday, for last week", async () => {
+    const asked: string[] = [];
+    const raw = { stageMoves: [], newMissions: [], relancesSent: [], openMissions: [], relanceDrafts: 0, offers: [], interviews: [], cards: [] };
+    const store = { readWeek: async (owner: string, week: { label: string }) => (asked.push(`${owner}:${week.label}`), raw) };
+    expect(await loadBriefWeekly(store, "u", new Date("2026-11-03T08:00:00Z"))).toBeNull(); // Tuesday
+    expect(await loadBriefWeekly(store, "u", new Date("2026-11-01T10:00:00Z"))).toBeNull(); // Sunday
+    expect(asked).toEqual([]);
+    const monday = await loadBriefWeekly(store, "u", new Date("2026-11-02T08:00:00Z"));
+    expect(monday).toEqual({ week: "2026-10-26", lines: [] });
+    expect(asked).toEqual(["u:2026-10-26"]);
   });
 });
