@@ -22,6 +22,7 @@ import { createOfferStore } from "./openduet/job-offers/store";
 import { createRevisionStore } from "./openduet/revision/store";
 import { createRevisionGenerator } from "./openduet/revision/generate";
 import { createCvStore } from "./openduet/job-offers/cv-store";
+import { createMailDraftStore } from "./openduet/mail-drafts/store";
 import { createPdfRenderer } from "./openduet/job-offers/cv-render";
 import { createDbProfileSource, createFileProfileSource } from "./openduet/job-offers/profile";
 import { createPrepStore } from "./openduet/missions/prep-store";
@@ -2884,6 +2885,25 @@ const app = createApp(
       debrief: { store: intakeDebriefs, source: anarlogSource },
       offers: { store: intakeOffers, profile: offerProfile, complete: listComplete, cv: cvDeps, revision: revisionGenerator },
       revision: { store: revisionStore, generator: revisionGenerator, cv: cvStore },
+      mailDrafts: {
+        store: createMailDraftStore(database),
+        missions: intakeMissions,
+        offers: intakeOffers,
+        cv: cvStore,
+        profile: offerProfile,
+        render: cvDeps.render,
+        complete: listComplete,
+        // The owner's push is theirs: the plugin store's approval gate asks as for any write.
+        callTool: (input) => pluginStore.callTool(input),
+        botFor: async (ownerUserId) =>
+          (
+            await database
+              .selectDistinct({ agentId: proactiveSettings.agentId })
+              .from(proactiveSettings)
+              .where(and(eq(proactiveSettings.ownerUserId, ownerUserId), eq(proactiveSettings.enabled, true)))
+              .limit(1)
+          )[0]?.agentId ?? null,
+      },
       // The checklist onboarding ends on. Facts and verdicts about this configuration, never values.
       setup: createSetupSources({
         productName: tenantPackage.productName,
