@@ -23,6 +23,7 @@ import {
   type CockpitProject,
   cockpitProjectsQueryOptions,
 } from "@/lib/cockpit/queries";
+import { remindersQueryOptions } from "@/lib/cockpit/reminders";
 import { Fragment } from "react";
 
 /**
@@ -40,6 +41,28 @@ export function sortAttention(items: AttentionItem[]): AttentionItem[] {
   return [...items].sort((a, b) => ORDER[a.severity] - ORDER[b.severity]);
 }
 
+/** Reminders that are due now, above the attention list. Quiet when none, or when the reminders cannot load. */
+function DueStrip() {
+  const { data } = useQuery(remindersQueryOptions());
+  const due = (data?.items ?? []).filter((i) => i.state === "due");
+  if (due.length === 0) return null;
+  return (
+    <PageSection title={`Due reminders (${due.length})`}>
+      <PageRows>
+        {due.slice(0, 5).map((item, i) => (
+          <Fragment key={item.id}>
+            {i > 0 ? <Separator /> : null}
+            <Link className="type-sub block px-4 py-3 hover:underline" to="/cockpit/reminders">
+              {item.project ? `${item.project}: ` : ""}
+              {item.text}
+            </Link>
+          </Fragment>
+        ))}
+      </PageRows>
+    </PageSection>
+  );
+}
+
 function CockpitProjects() {
   const { data, error, isPending } = useQuery(cockpitProjectsQueryOptions());
   return (
@@ -53,6 +76,7 @@ function CockpitProjects() {
         <PageEmpty>Loading…</PageEmpty>
       ) : (
         <>
+          <DueStrip />
           <PageSection title="Needs attention">
             {data.attention.length === 0 ? (
               <PageEmpty>Nothing needs you right now.</PageEmpty>
