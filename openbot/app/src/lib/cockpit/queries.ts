@@ -119,7 +119,7 @@ export const cockpitKeys = {
   detail: (name: string) => ["cockpit", "projects", name] as const,
 };
 
-const BASE = `http://127.0.0.1:${import.meta.env.VITE_COCKPIT_PORT ?? 3002}`;
+export const BASE = `http://127.0.0.1:${import.meta.env.VITE_COCKPIT_PORT ?? 3002}`;
 
 /** Thrown when the cockpit server does not answer at all, so a screen can say it is off. */
 export class CockpitOffError extends Error {
@@ -129,7 +129,7 @@ export class CockpitOffError extends Error {
   }
 }
 
-async function read<T>(path: string, signal?: AbortSignal): Promise<T> {
+export async function read<T>(path: string, signal?: AbortSignal): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${BASE}${path}`, {

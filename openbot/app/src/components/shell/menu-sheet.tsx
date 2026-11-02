@@ -335,6 +335,15 @@ export function MenuSheet({
               <RowIcon name="checkCircle" />
               Cockpit
             </Link>
+            <Link
+              activeProps={{ className: "bg-duet-tile" }}
+              className={ROW}
+              onClick={close}
+              to="/cockpit/usage"
+            >
+              <RowIcon name="activity" />
+              Usage
+            </Link>
             <h2>
               <button
                 aria-controls={manage.id}
