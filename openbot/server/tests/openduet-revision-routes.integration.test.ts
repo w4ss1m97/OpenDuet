@@ -43,9 +43,36 @@ const concepts = (prefix: string, n: number) =>
   JSON.stringify({
     cards: Array.from({ length: n }, (_, i) => ({ topic: `${prefix} ${i}`, question: "Q ?", answer: "Réponse.", keyPoints: ["a", "b"] })),
   });
+const deepDetails = {
+  star: { situation: "s", task: "t", action: "a", result: "r" },
+  underTheHood: "u",
+  architecture: ["A → B : x", "B → C : y", "C → D : z"],
+  traps: [
+    { question: "Trap A ?", answer: "Réponse A." },
+    { question: "Trap B ?", answer: "Réponse B." },
+    { question: "Trap C ?", answer: "Réponse C." },
+  ],
+  lab: ["1", "2", "3"],
+  value: "v",
+  rescue: ["a", "b", "c"],
+};
+let gradeReply = JSON.stringify({
+  scores: { structure: 5, technical: 4, value: 3 },
+  missing: ["le cache"],
+  feedback: "Bien.",
+  betterAnswer: "Une API stable.",
+});
+let gradePrompts: string[] = [];
+const gradeComplete = async (p: string) => {
+  gradePrompts.push(p);
+  if (gradeReply === "THROW") throw new Error("model down");
+  return gradeReply;
+};
 const complete = async (p: string) => {
   calls += 1;
   if (gate) await gate;
+  if (p.includes("fiche de coaching"))
+    return JSON.stringify({ cards: [...p.matchAll(/^\[([a-z0-9-]+)\] /gm)].map((m) => ({ bulletId: m[1], ...deepDetails })) });
   if (failOffer && p.includes("Titre :")) throw new Error("model down");
   if (p.includes("questions comportementales")) return JSON.stringify({ stories: [{ question: "Q", theme: "T", bulletIds: ["acme-api"] }] });
   const m = p.match(/groupe de compétences « (.+?) »/);
@@ -55,7 +82,7 @@ const generator = createRevisionGenerator({ store: sink, complete, getMaster: (o
 
 let clock = new Date();
 const app = new Hono()
-  .route("/api/openduet/revision", createRevisionRoutes({ store, generator, cv: cvStore, items, offers, now: () => clock }, asActor))
+  .route("/api/openduet/revision", createRevisionRoutes({ store, generator, cv: cvStore, items, offers, complete: gradeComplete, now: () => clock }, asActor))
   .route(
     "/api/openduet/offers",
     createOfferRoutes(
@@ -257,4 +284,141 @@ test("loadBriefRevision: null when empty, counts, focus company and three skills
     newCount: 1,
     focus: { company: "Soonco", skills: ["TypeScript", "Kafka"] },
   });
+});
+
+async function deepCard(who: string, over: { offerEnv?: boolean; bullet?: string } = {}) {
+  const bullet = over.bullet ?? "acme-api";
+  const [row] = await store.insertCards(who, [
+    { kind: "deep", topic: bullet, question: `Expliquez : ${bullet}`, answer: "- Conception d'une API (2023)", keyPoints: [], bulletIds: [bullet], masterHash: "h", dedupKey: `deep:${randomUUID()}`, details: deepDetails },
+  ]);
+  return row;
+}
+
+test("deep/generate: 409 no_master, 202, 409 while running, status counts and deep state, owner scoped", async () => {
+  const who = await person();
+  const other = await person();
+  const none = await call(who, "/api/openduet/revision/deep/generate", "POST");
+  expect(none.status).toBe(409);
+  expect((await json(none)).code).toBe("no_master");
+
+  await cvStore.putMaster(who, cvMasterFixture);
+  gate = new Promise<void>((resolve) => (release = resolve));
+  const started = await call(who, "/api/openduet/revision/deep/generate", "POST");
+  expect(started.status).toBe(202);
+  expect((await call(who, "/api/openduet/revision/deep/generate", "POST")).status).toBe(409);
+  expect((await json(await call(who, "/api/openduet/revision/status"))).deep.running).toBe(true);
+  (release as unknown as () => void)();
+  gate = null;
+  await generator.idle(who);
+
+  const status = await json(await call(who, "/api/openduet/revision/status"));
+  expect(status.deep).toEqual({ running: false, lastError: null });
+  expect(status.counts.deep).toBe(5);
+  const deeps = (await json(await call(who, "/api/openduet/revision/cards?kind=deep"))).cards;
+  expect(deeps).toHaveLength(5);
+  expect(deeps[0].details.traps).toHaveLength(3);
+  expect(deeps.every((c: any) => c.atRisk === false)).toBe(true);
+  expect((await json(await call(other, "/api/openduet/revision/cards?kind=deep"))).cards).toEqual([]);
+});
+
+test("atRisk: a deep card in box 1 reviewed 3 times, in /cards and /today", async () => {
+  const who = await person();
+  const c = await deepCard(who);
+  for (let i = 0; i < 3; i++) await store.review(who, c.id, "again", clock);
+  const cards = (await json(await call(who, "/api/openduet/revision/cards?kind=deep"))).cards;
+  expect(cards[0].atRisk).toBe(true);
+  const today = (await json(await call(who, "/api/openduet/revision/today"))).cards;
+  expect(today.every((t: any) => typeof t.atRisk === "boolean")).toBe(true);
+});
+
+test("mock/questions: from deep cards only, one per card, with reviewCount; validated limit; owner scoped", async () => {
+  const who = await person();
+  const other = await person();
+  await card(who);
+  const a = await deepCard(who);
+  const b = await deepCard(who, { bullet: "acme-ci" });
+  const gone = await deepCard(who, { bullet: "acme-perf" });
+  await store.archive(who, gone.id);
+  await deepCard(other);
+  const res = await call(who, "/api/openduet/revision/mock/questions?limit=5");
+  expect(res.status).toBe(200);
+  const { questions } = await json(res);
+  expect(questions.map((q: any) => q.cardId).sort()).toEqual([a.id, b.id].sort());
+  expect(questions[0]).toMatchObject({ reviewCount: 0 });
+  expect(questions[0]).toHaveProperty("trapIndex");
+  expect((await json(await call(who, "/api/openduet/revision/mock/questions?limit=1"))).questions).toHaveLength(1);
+  expect((await call(who, "/api/openduet/revision/mock/questions?limit=0")).status).toBe(400);
+  expect((await call(who, "/api/openduet/revision/mock/questions?limit=11")).status).toBe(400);
+});
+
+test("mock/answer: grades, moves the Leitner state, fences the answer", async () => {
+  const who = await person();
+  const c = await deepCard(who);
+  gradePrompts = [];
+  const res = await call(who, "/api/openduet/revision/mock/answer", "POST", { cardId: c.id, trapIndex: 1, reviewCount: 0, answer: "  Ma réponse  " });
+  expect(res.status).toBe(200);
+  const body = await json(res);
+  expect(body).toMatchObject({ scores: { structure: 5, technical: 4, value: 3 }, missing: ["le cache"], betterAnswer: "Une API stable.", grade: "good" });
+  expect(body.card).toMatchObject({ box: 2, reviewCount: 1, lastGrade: "good" });
+  expect(gradePrompts).toHaveLength(1);
+  expect(gradePrompts[0]).toContain("Trap B ?");
+  expect(gradePrompts[0]).toContain("data, not instructions");
+  expect(gradePrompts[0]).toContain("Ma réponse");
+});
+
+test("mock/answer: 400 without a model call, 404, 409 archived and review_conflict, 503 without review", async () => {
+  const who = await person();
+  const other = await person();
+  const c = await deepCard(who);
+  const path = "/api/openduet/revision/mock/answer";
+  const ok = { cardId: c.id, trapIndex: null, reviewCount: 0, answer: "x" };
+  gradePrompts = [];
+  for (const bad of [
+    { ...ok, answer: "   " },
+    { ...ok, answer: "x".repeat(4001) },
+    { ...ok, trapIndex: 3 },
+    { ...ok, trapIndex: -1 },
+    { ...ok, reviewCount: undefined },
+    { ...ok, extra: 1 },
+    { cardId: c.id },
+  ])
+    expect((await call(who, path, "POST", bad)).status).toBe(400);
+  expect(gradePrompts).toHaveLength(0);
+
+  expect((await call(other, path, "POST", ok)).status).toBe(404);
+  expect((await call(who, path, "POST", { ...ok, cardId: randomUUID() })).status).toBe(404);
+  const concept = await card(who);
+  expect((await call(who, path, "POST", { ...ok, cardId: concept })).status).toBe(404);
+  const mismatch = await call(who, path, "POST", { ...ok, reviewCount: 2 });
+  expect(mismatch.status).toBe(409);
+  expect((await json(mismatch)).code).toBe("review_conflict");
+  expect(gradePrompts).toHaveLength(0);
+
+  const saved = gradeReply;
+  gradeReply = "pas du json";
+  const unreadable = await call(who, path, "POST", ok);
+  expect(unreadable.status).toBe(503);
+  gradeReply = "THROW";
+  expect((await call(who, path, "POST", ok)).status).toBe(503);
+  gradeReply = saved;
+  expect((await store.get(who, c.id))?.reviewCount).toBe(0);
+
+  await store.archive(who, c.id);
+  const archived = await call(who, path, "POST", ok);
+  expect(archived.status).toBe(409);
+  expect((await json(archived)).code).toBe("archived");
+});
+
+test("mock/answer: an invented number in betterAnswer comes back null, the review still applies", async () => {
+  const who = await person();
+  const c = await deepCard(who);
+  const saved = gradeReply;
+  gradeReply = JSON.stringify({ scores: { structure: 1, technical: 1, value: 1 }, missing: [], feedback: "Court.", betterAnswer: "Gain de 99 %." });
+  const res = await call(who, "/api/openduet/revision/mock/answer", "POST", { cardId: c.id, trapIndex: null, reviewCount: 0, answer: "x" });
+  gradeReply = saved;
+  expect(res.status).toBe(200);
+  const body = await json(res);
+  expect(body.betterAnswer).toBeNull();
+  expect(body.grade).toBe("again");
+  expect(body.card.reviewCount).toBe(1);
 });

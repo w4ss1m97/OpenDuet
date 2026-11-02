@@ -1,0 +1,5 @@
+ALTER TABLE "openduet_revision_cards" DROP CONSTRAINT "openduet_revision_cards_kind_check";--> statement-breakpoint
+ALTER TABLE "openduet_revision_cards" ADD COLUMN "details" jsonb;--> statement-breakpoint
+ALTER TABLE "openduet_revision_cards" ADD CONSTRAINT "openduet_revision_cards_deep_check" CHECK (("openduet_revision_cards"."kind" = 'deep') = ("openduet_revision_cards"."details" IS NOT NULL));--> statement-breakpoint
+ALTER TABLE "openduet_revision_cards" ADD CONSTRAINT "openduet_revision_cards_deep_bullet_check" CHECK ("openduet_revision_cards"."kind" <> 'deep' OR cardinality("openduet_revision_cards"."bullet_ids") = 1);--> statement-breakpoint
+ALTER TABLE "openduet_revision_cards" ADD CONSTRAINT "openduet_revision_cards_kind_check" CHECK ("openduet_revision_cards"."kind" IN ('concept', 'story', 'pitch', 'deep'));

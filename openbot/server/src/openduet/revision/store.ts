@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import type { Database } from "../../db/client";
 import {
+  type DeepDetails,
   type OpenduetRevisionCard,
   type RevisionGrade,
   type RevisionKind,
@@ -21,6 +22,7 @@ export type NewRevisionCard = {
   bulletIds: string[];
   masterHash: string;
   dedupKey: string;
+  details?: DeepDetails | null;
 };
 
 export type TodayCard = OpenduetRevisionCard & { stale: boolean };
@@ -64,6 +66,7 @@ export function createRevisionStore(db: Database) {
             bulletIds: card.bulletIds,
             masterHash: card.masterHash,
             dedupKey: card.dedupKey,
+            details: card.details ?? null,
           })),
         )
         .onConflictDoNothing({ target: [c.ownerUserId, c.dedupKey] })
@@ -72,7 +75,7 @@ export function createRevisionStore(db: Database) {
 
     /**
      * Cards to revise now, in order: focus cards (offer in `focusOfferIds`) due or new, then due cards by
-     * due date, then new cards by creation. Archived and not-yet-due cards are left out. A story card is
+     * due date, then new cards by creation. Archived and not-yet-due cards are left out. A story or deep card is
      * `stale` when its master hash differs from `masterHash` (the current master's).
      */
     async listToday(
@@ -102,7 +105,7 @@ export function createRevisionStore(db: Database) {
         .limit(opts.limit);
       return rows.map((row) => ({
         ...row,
-        stale: row.kind === "story" && opts.masterHash != null && row.masterHash !== opts.masterHash,
+        stale: (row.kind === "story" || row.kind === "deep") && opts.masterHash != null && row.masterHash !== opts.masterHash,
       }));
     },
 
@@ -138,10 +141,17 @@ export function createRevisionStore(db: Database) {
      * Optimistic: the update only applies if the review count is the one just read and the card is not
      * archived, so of two parallel reviews one wins and the other gets `conflict`.
      */
-    async review(owner: string, id: string, grade: RevisionGrade, now: Date): Promise<ReviewResult> {
+    async review(
+      owner: string,
+      id: string,
+      grade: RevisionGrade,
+      now: Date,
+      expectedReviewCount?: number,
+    ): Promise<ReviewResult> {
       const card = await get(owner, id);
       if (!card) return { result: "not_found" };
       if (card.archivedAt) return { result: "archived" };
+      if (expectedReviewCount !== undefined && card.reviewCount !== expectedReviewCount) return { result: "conflict" };
       const { box, dueAt } = nextReview(card.box, grade, now);
       const [row] = await db
         .update(c)
@@ -159,6 +169,24 @@ export function createRevisionStore(db: Database) {
       const again = await get(owner, id);
       if (!again) return { result: "not_found" };
       return { result: again.archivedAt ? "archived" : "conflict" };
+    },
+
+    /** Dedup keys of the owner's deep cards, archived ones too, so an archived card is not regenerated. */
+    async deepKeys(owner: string): Promise<Set<string>> {
+      const rows = await db
+        .select({ key: c.dedupKey })
+        .from(c)
+        .where(and(eq(c.ownerUserId, owner), eq(c.kind, "deep")));
+      return new Set(rows.map((r) => r.key));
+    },
+
+    /** Marks the deep cards behind `keys` as built from the current master: their bullet did not change. */
+    async touchDeep(owner: string, keys: string[], masterHash: string): Promise<void> {
+      if (keys.length === 0) return;
+      await db
+        .update(c)
+        .set({ masterHash })
+        .where(and(eq(c.ownerUserId, owner), eq(c.kind, "deep"), inArray(c.dedupKey, keys)));
     },
 
     /** Idempotent: an already archived card keeps its first archive date. Null when not this owner's. */
