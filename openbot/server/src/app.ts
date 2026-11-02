@@ -123,6 +123,7 @@ import type { PrepStore } from "./openduet/missions/prep-store";
 import { createCvRoutes } from "./openduet/job-offers/cv-routes";
 import { createOfferRoutes, type OfferRouteDeps } from "./openduet/job-offers/routes";
 import { createCareerRoutes, type CareerRouteDeps } from "./openduet/career/routes";
+import { createMailDraftRoutes, type MailDraftRouteDeps } from "./openduet/mail-drafts/routes";
 import { createRevisionRoutes, type RevisionRouteDeps } from "./openduet/revision/routes";
 import { createMissionRoutes } from "./openduet/missions/routes";
 import type { MissionStore } from "./openduet/missions/store";
@@ -483,6 +484,8 @@ export function createApp(
       revision?: Omit<RevisionRouteDeps, "items" | "offers">;
       /** Weekly career check (A5). Read-only, computed in code. See openduet/career. */
       career?: CareerRouteDeps;
+      /** Gmail drafts (A4): relance and application mails, pushed as Gmail drafts on the owner's say. See openduet/mail-drafts. */
+      mailDrafts?: MailDraftRouteDeps;
       setup?: SetupSources;
       tasks?: TaskStore;
       intake?: TaskIntake;
@@ -1762,6 +1765,8 @@ export function createApp(
     app.route("/api/openduet/career", createCareerRoutes(coworker.openduet.career, requireUser));
   if (coworker?.openduet?.offers?.cv)
     app.route("/api/openduet/cv", createCvRoutes(coworker.openduet.offers.cv, requireUser));
+  if (coworker?.openduet?.mailDrafts)
+    app.route("/api/openduet/mail-drafts", createMailDraftRoutes(coworker.openduet.mailDrafts, requireUser));
   /*
    * Signed in, unlike `/api/capabilities`, which anybody can read. The checklist names what this
    * deployment has and lacks, and for an admin which variables would close a gap, which is not a

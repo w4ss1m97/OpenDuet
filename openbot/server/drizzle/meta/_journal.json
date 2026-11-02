@@ -526,6 +526,13 @@
       "when": 1793545961359,
       "tag": "0074_openduet_revision",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1793575882587,
+      "tag": "0075_openduet_mail_drafts",
+      "breakpoints": true
     }
   ]
 }
