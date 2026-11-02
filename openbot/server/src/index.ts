@@ -2633,6 +2633,7 @@ const channelSummaries = {
   transcript: routineIntelligence,
   title: createChannelTitler({
     model: runtimeModel.defaultModel,
+    provider: runtimeModel.provider,
     resolveApiKey: resolveRuntimeModelApiKey,
   }),
   owner: workOwner("summariser"),

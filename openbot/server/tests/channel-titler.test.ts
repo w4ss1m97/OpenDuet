@@ -128,4 +128,35 @@ describe("asking the model for a title", () => {
 
     expect(answer).toBeNull();
   });
+  test("asks Anthropic's Messages API with its own header when the deployment runs on Anthropic", async () => {
+    const calls: { url: string; headers: Headers; body: Record<string, unknown> }[] = [];
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      calls.push({
+        url: String(url),
+        headers: new Headers(init?.headers),
+        body: JSON.parse(String(init?.body ?? "{}")),
+      });
+      return new Response(
+        JSON.stringify({ content: [{ type: "text", text: "Freelance mission search" }] }),
+      );
+    }) as unknown as typeof fetch;
+
+    const answer = await createChannelTitler({
+      model: "claude-sonnet-5-5",
+      provider: "anthropic",
+      resolveApiKey: async () => "sk-ant-test",
+      environment: {},
+      fetchImpl,
+    })("Asked: any missions above 500 a day?");
+
+    expect(answer).toBe("Freelance mission search");
+    expect(calls[0]?.url).toBe("https://api.anthropic.com/v1/messages");
+    expect(calls[0]?.headers.get("x-api-key")).toBe("sk-ant-test");
+    expect(calls[0]?.headers.get("authorization")).toBeNull();
+    expect(calls[0]?.body.system).toBeString();
+    expect(calls[0]?.body.max_tokens).toBe(512);
+    expect(calls[0]?.body.messages).toEqual([
+      { role: "user", content: "Asked: any missions above 500 a day?" },
+    ]);
+  });
 });
