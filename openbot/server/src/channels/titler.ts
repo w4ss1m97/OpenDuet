@@ -3,6 +3,7 @@
  * not part of the conversation it names, so there is no runtime work and no thread to hold.
  */
 import { chatCompletionsUrl } from "../routing/model";
+import { markUntrusted } from "../untrusted-content";
 import { oneLine } from "./text";
 
 /** Rules, not an example: a model copies an example's subject as readily as its shape. */
@@ -45,7 +46,8 @@ export function createChannelTitler(options: TitlerOptions) {
           model: options.model,
           messages: [
             { role: "system", content: INSTRUCTION },
-            { role: "user", content: excerpt },
+            // The excerpt is conversation text, so it is fenced as data.
+            { role: "user", content: markUntrusted(excerpt, "conversation excerpt") },,
           ],
           // Reasoning tokens come out of this budget, so a cap sized for the answer alone 400s.
           max_completion_tokens: 512,
