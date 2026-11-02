@@ -10,6 +10,7 @@ import {
   matchSessions,
   parseDirty,
   parseNotes,
+  parseRuns,
   parseOrigin,
   parseWorktrees,
 } from "../src/openduet/cockpit/collect";
@@ -176,6 +177,7 @@ describe("collectProject", () => {
     expect(p.dirty).toEqual({ count: 2, oldest: 1700000300, files: ["a.ts", "gone.ts"] });
     expect(p.notes?.nextStep).toBe("do it");
     expect(p.prs).toEqual([{ number: 4, title: "T", branch: "feat/x", url: "https://github.com/o/r/pull/4", draft: false, mergeState: "CLEAN", checks: "success", updated: "2026-11-01T00:00:00Z" }]);
+    expect(p.runs![0]).toMatchObject({ started: null, attempt: 1 });
     expect(p.runs![0]).toMatchObject({ id: 9, wid: 3, dynamic: false, workflow: "CI", branch: "main", conclusion: "failure", t: Date.parse("2026-11-01T00:00:00Z") / 1000 });
     // The fake git answers every path alike, hence dirty 2. /h/elsewhere is outside the project's home subtree per realUnderHome: dropped; /h/demo/wt kept.
     expect(p.worktrees).toEqual([{ path: "/h/demo/wt", branch: "feat/w", ahead: 3, dirty: 2, prMerged: true }]);
@@ -225,5 +227,15 @@ describe("collectProject", () => {
     const seen: string[] = [];
     await collectProject(project, { ...deps(base), git: gitOf(base, seen) });
     expect(seen.some((s) => s.startsWith("/h/elsewhere"))).toBe(false);
+  });
+});
+
+describe("parseRuns: started and attempt", () => {
+  const raw = (extra: Record<string, unknown>) =>
+    JSON.stringify({ workflow_runs: [{ id: 1, name: "CI", status: "in_progress", conclusion: null, html_url: "https://github.com/o/r/actions/runs/1", updated_at: "2026-11-01T00:10:00Z", ...extra }] });
+  test("run_started_at and run_attempt come through; absent ones become null and 1", () => {
+    expect(parseRuns(raw({ run_started_at: "2026-11-01T00:00:00Z", run_attempt: 3 }))![0]).toMatchObject({ started: "2026-11-01T00:00:00Z", attempt: 3 });
+    expect(parseRuns(raw({ run_started_at: null, run_attempt: null }))![0]).toMatchObject({ started: null, attempt: 1 });
+    expect(parseRuns(raw({}))![0]).toMatchObject({ started: null, attempt: 1 });
   });
 });

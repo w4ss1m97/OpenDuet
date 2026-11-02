@@ -344,6 +344,24 @@ export function MenuSheet({
               <RowIcon name="activity" />
               Usage
             </Link>
+            <Link
+              activeProps={{ className: "bg-duet-tile" }}
+              className={ROW}
+              onClick={close}
+              to="/cockpit/ci"
+            >
+              <RowIcon name="repeat" />
+              CI
+            </Link>
+            <Link
+              activeProps={{ className: "bg-duet-tile" }}
+              className={ROW}
+              onClick={close}
+              to="/cockpit/machine"
+            >
+              <RowIcon name="box" />
+              Machine
+            </Link>
             <h2>
               <button
                 aria-controls={manage.id}

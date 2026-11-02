@@ -67,6 +67,8 @@ export type CockpitRun = {
   url: string;
   updated: string;
   t: number;
+  started: string | null;
+  attempt: number;
 };
 
 export type CockpitSession = {

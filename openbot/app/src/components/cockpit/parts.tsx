@@ -116,6 +116,13 @@ export function AttentionRow({ item }: { item: AttentionItem }) {
         <External href={item.link}>
           <span className="type-sub">Open</span>
         </External>
+      ) : item.project === "Machine" ? (
+        <Link
+          className="type-sub underline-offset-2 hover:underline"
+          to="/cockpit/machine"
+        >
+          Open
+        </Link>
       ) : (
         <Link
           className="type-sub underline-offset-2 hover:underline"
