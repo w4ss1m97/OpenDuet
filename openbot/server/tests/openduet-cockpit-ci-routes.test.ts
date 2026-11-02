@@ -66,7 +66,7 @@ function build(o: Opts = {}) {
       return o.runResult === undefined ? "" : o.runResult;
     },
   });
-  const app = createCockpitApp({ getPort: () => PORT, origins: ORIGINS, service, ci, control });
+  const app = createCockpitApp({ getPort: () => PORT, origins: ORIGINS, service, ci, control, now: o.now });
   const call = (path: string, init: { method?: string; headers?: Record<string, string> } = {}) =>
     app.request(`http://127.0.0.1:${PORT}${path}`, { method: init.method ?? "GET", headers: { Host: `127.0.0.1:${PORT}`, ...init.headers } }, LOCAL as object);
   const post = (path: string, headers: Record<string, string> = { Origin: ORIGIN }) => call(path, { method: "POST", headers });

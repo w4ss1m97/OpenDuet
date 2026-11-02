@@ -3,7 +3,12 @@ import type { Complete } from "../triage";
 import { createTtlCache } from "./cache";
 import { type CiService, createCiService } from "./ci";
 import { type CockpitService, createCockpitService } from "./collect";
+import { createCockpitConfigSource } from "./cockpit-config";
 import { type MachineService, createMachineService } from "./machine";
+import { createNotifier } from "./notify";
+import { type QualityService, createQualityService } from "./quality-service";
+import { createQualityStore } from "./quality-store";
+import { REMINDER_ID, type RemindersService, createRemindersService } from "./reminders";
 import { type RunnerControl, createRunnerControl } from "./runner-control";
 import type { AttentionItem } from "./types";
 import { type ExplainService, createExplainService } from "./explain";
@@ -34,11 +39,34 @@ export type CockpitAppOptions = {
   machine?: MachineService;
   /** Pause and resume of one runner; without it the POST answers 404. */
   control?: RunnerControl;
+  /** Quality scans and findings; without it the quality routes answer 404. */
+  quality?: QualityService;
+  /** Reminders and notifications; without it the reminder routes answer 404. */
+  reminders?: RemindersService;
+  /** Milliseconds clock for the write limits; tests pass their own. */
+  now?: () => number;
 };
 
 const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
 const EXPLAIN_POST = /^\/api\/cockpit\/projects\/[^/]+\/explain$/;
 const RUNNER_POST = /^\/api\/cockpit\/runners\/[^/]+\/(pause|resume)$/;
+/**
+ * Every write the cockpit accepts, and nothing else: a body-less simple POST with its arguments in the query string.
+ * One list, one guard (below): a new write is added here or it answers 405.
+ */
+const WRITES: Array<{ re: RegExp; allow: string }> = [
+  { re: EXPLAIN_POST, allow: "GET, POST" },
+  { re: RUNNER_POST, allow: "POST" },
+  { re: /^\/api\/cockpit\/quality\/scan$/, allow: "POST" },
+  { re: /^\/api\/cockpit\/quality\/[^/]+\/dismiss$/, allow: "POST" },
+  { re: /^\/api\/cockpit\/reminders$/, allow: "GET, POST" },
+  { re: /^\/api\/cockpit\/reminders\/[^/]+\/(done|snooze|delete)$/, allow: "POST" },
+  { re: /^\/api\/cockpit\/notifications\/test$/, allow: "POST" },
+];
+const WRITES_PER_MINUTE = 30;
+const SCAN_ALL_EVERY_S = 300;
+const PROJECT_KEY = /^[0-9a-f]{16}$/;
+const ACTION_ID = /^\/api\/cockpit\/reminders\/[^/]+\/(done|snooze|delete)$/;
 const RUNNER_NAME = /^[\w.-]{1,64}$/;
 const HEAD_SHA = /^[0-9a-f]{40}$/;
 const SESSION_ID = /^[A-Za-z0-9_-]{1,100}$/;
@@ -47,11 +75,15 @@ const SESSION_ID = /^[A-Za-z0-9_-]{1,100}$/;
  * The cockpit's own Hono app. It never joins the main app, whose /api is reachable from the LAN and
  * from the app's proxy at 127.0.0.1; here every request must come from this machine, name this
  * machine in `Host` (DNS rebinding), and, when it is a page, come from one of the allowed origins.
- * GET only, except two POSTs (generate an explanation, which costs tokens; pause or resume a runner): they
- * must come from an allowed page Origin and carry no body, so they are simple requests that never need a preflight.
+ * GET only, except the POSTs listed in WRITES (explanations, runner control, scans, reminders): they must come from
+ * an allowed page Origin, carry no body and no repeated parameter, and stay under 30 a minute, so they are simple
+ * requests that never need a preflight.
  */
 export function createCockpitApp(options: CockpitAppOptions) {
   const app = new Hono<{ Bindings: Bindings }>();
+  const clock = options.now ?? Date.now;
+  const writeTimes: number[] = [];
+  let lastScanAll = 0;
 
   app.use("*", async (c, next) => {
     const port = options.getPort();
@@ -61,12 +93,28 @@ export function createCockpitApp(options: CockpitAppOptions) {
     if (!peer || !LOOPBACK.has(peer)) return c.json({ error: "forbidden" }, 403);
     const origin = c.req.header("origin");
     if (origin !== undefined && !options.origins.has(origin)) return c.json({ error: "forbidden" }, 403);
-    const post = c.req.method === "POST" && (EXPLAIN_POST.test(c.req.path) || RUNNER_POST.test(c.req.path));
+    const write = WRITES.find((w) => w.re.test(c.req.path));
+    const post = c.req.method === "POST" && write !== undefined;
     if (c.req.method !== "GET" && !post) {
-      c.header("Allow", EXPLAIN_POST.test(c.req.path) ? "GET, POST" : RUNNER_POST.test(c.req.path) ? "POST" : "GET");
+      c.header("Allow", write?.allow ?? "GET");
       return c.json({ error: "method not allowed" }, 405);
     }
-    if (post && origin === undefined) return c.json({ error: "forbidden" }, 403);
+    if (post) {
+      if (origin === undefined) return c.json({ error: "forbidden" }, 403);
+      const length = c.req.header("content-length");
+      if ((length !== undefined && length.trim() !== "0") || c.req.header("transfer-encoding") !== undefined) {
+        return c.json({ error: "no body allowed" }, 400);
+      }
+      const names = [...new URL(c.req.url).searchParams.keys()];
+      if (new Set(names).size !== names.length) return c.json({ error: "bad query" }, 400);
+      const nowMs = clock();
+      while (writeTimes.length > 0 && nowMs - writeTimes[0]! >= 60_000) writeTimes.shift();
+      if (writeTimes.length >= WRITES_PER_MINUTE) {
+        c.header("Retry-After", String(Math.max(1, Math.ceil((writeTimes[0]! + 60_000 - nowMs) / 1000))));
+        return c.json({ error: "too many writes" }, 429);
+      }
+      writeTimes.push(nowMs);
+    }
     c.header("Cache-Control", "no-store");
     if (origin !== undefined) {
       c.header("Access-Control-Allow-Origin", origin);
@@ -189,15 +237,85 @@ export function createCockpitApp(options: CockpitAppOptions) {
     }
   });
 
+  const notFound = (c: Context) => c.json({ error: "not found" }, 404);
+
+  app.get("/api/cockpit/quality", async (c) => (options.quality ? c.json(await options.quality.summary()) : notFound(c)));
+
+  app.get("/api/cockpit/quality/:name", async (c) => {
+    const found = await options.quality?.detail(c.req.param("name"));
+    return found ? c.json(found) : notFound(c);
+  });
+
+  app.post("/api/cockpit/quality/scan", async (c) => {
+    if (!options.quality) return notFound(c);
+    const target = param(c, "project");
+    if (target === undefined || target === "" || target.length > 100) return c.json({ error: "project is required" }, 400);
+    if (target === "all") {
+      const waited = clock() / 1000 - lastScanAll;
+      if (waited < SCAN_ALL_EVERY_S) {
+        c.header("Retry-After", String(Math.ceil(SCAN_ALL_EVERY_S - waited)));
+        return c.json({ error: "scan of all projects asked too soon" }, 429);
+      }
+    }
+    const out = await options.quality.requestScan(target);
+    if (!out.accepted) return notFound(c);
+    if (target === "all") lastScanAll = clock() / 1000;
+    return c.json({ queued: out.queued }, 202);
+  });
+
+  app.post("/api/cockpit/quality/:name/dismiss", async (c) => {
+    if (!options.quality) return notFound(c);
+    const key = param(c, "key");
+    if (key === undefined || !PROJECT_KEY.test(key)) return c.json({ error: "key must be 16 hex characters" }, 400);
+    const out = await options.quality.dismiss(c.req.param("name"), key);
+    return out.ok ? c.json({ until: out.until }) : notFound(c);
+  });
+
+  app.get("/api/cockpit/reminders", async (c) => (options.reminders ? c.json(await options.reminders.list()) : notFound(c)));
+
+  app.post("/api/cockpit/reminders", async (c) => {
+    if (!options.reminders) return notFound(c);
+    const out = await options.reminders.add({ text: param(c, "text"), due: param(c, "due"), project: param(c, "project"), repeat: param(c, "repeat") });
+    if (out.ok) return c.json(out.item, 201);
+    return c.json({ error: out.error }, out.kind === "full" ? 409 : 400);
+  });
+
+  app.post("/api/cockpit/reminders/:id/:action", async (c) => {
+    if (!options.reminders) return notFound(c);
+    const id = c.req.param("id");
+    if (!REMINDER_ID.test(id)) return c.json({ error: "bad id" }, 400);
+    const action = ACTION_ID.exec(c.req.path)![1] as "done" | "snooze" | "delete";
+    const rawUntil = param(c, "until");
+    if (rawUntil !== undefined && !/^\d{1,11}$/.test(rawUntil)) return c.json({ error: "until must be epoch seconds" }, 400);
+    const out = await options.reminders.act(id, action, rawUntil === undefined ? undefined : Number(rawUntil));
+    if (out.ok) return c.json({ ok: true });
+    return out.kind === "notfound" ? notFound(c) : c.json({ error: out.error }, 400);
+  });
+
+  app.post("/api/cockpit/notifications/test", async (c) => {
+    if (!options.reminders) return notFound(c);
+    const out = await options.reminders.testNotification();
+    if (out.kind === "ok") return c.json({ sent: true });
+    if (out.kind === "rate") {
+      c.header("Retry-After", String(out.retryAfterSeconds));
+      return c.json({ error: "one test a minute" }, 429);
+    }
+    return c.json({ error: "the notification could not be sent" }, 502);
+  });
+
   app.notFound((c) => c.json({ error: "not found" }, 404));
   return app;
 }
 
-/** Attention lines from outside the projects: the usage budgets and a low disk. One failing source costs only itself. */
-export function cockpitExtraAttention(usage: UsageService | undefined, machine: MachineService | undefined) {
+/** Attention lines from outside the projects: the usage budgets, a low disk, the quality high findings. One failing source costs only itself. */
+export function cockpitExtraAttention(usage: UsageService | undefined, machine: MachineService | undefined, quality?: QualityService) {
+  const qualityLines = async (): Promise<AttentionItem[]> =>
+    ((await quality?.summary())?.projects ?? []).flatMap((p) =>
+      p.high.map((f) => ({ project: p.name, severity: "high" as const, message: f.text, link: `/cockpit/quality/${p.name}` })),
+    );
   return async (): Promise<AttentionItem[]> => {
     const parts = await Promise.all(
-      [usage?.attention(), machine?.attention()].map(async (p) => {
+      [usage?.attention(), machine?.attention(), quality ? qualityLines() : undefined].map(async (p) => {
         try {
           return (await p) ?? [];
         } catch {
@@ -229,6 +347,9 @@ export function startCockpitServer(options: {
   ci?: CiService | null;
   machine?: MachineService | null;
   control?: RunnerControl | null;
+  /** Quality scans and reminders. Left out they are the real ones unless a `service` is injected; `null` turns them off. */
+  quality?: QualityService | null;
+  reminders?: RemindersService | null;
 }) {
   let bound = options.port;
   const usage =
@@ -243,7 +364,23 @@ export function startCockpitServer(options: {
   const real = options.service === undefined;
   const cache = createTtlCache();
   const machine = options.machine === undefined ? (real ? createMachineService({ cache }) : undefined) : (options.machine ?? undefined);
-  const service = options.service ?? createCockpitService({ deps: { cache }, extraAttention: cockpitExtraAttention(usage, machine) });
+  const settings = createCockpitConfigSource();
+  const listProjects = () => loadCockpitProjects({ file: PROJECTS_FILE });
+  const quality =
+    options.quality === undefined
+      ? real ? createQualityService({ store: createQualityStore(), listProjects, config: () => settings.quality() }) : undefined
+      : (options.quality ?? undefined);
+  const service = options.service ?? createCockpitService({ deps: { cache }, extraAttention: cockpitExtraAttention(usage, machine, quality) });
+  const reminders =
+    options.reminders === undefined
+      ? real
+        ? createRemindersService({
+            config: () => settings.get(), snapshot: () => service.snapshot(), listProjects, notifier: createNotifier(),
+            budgets: usage ? async () => (await usage.budgets()).budgets : undefined,
+            quality: quality ? () => quality.summary() : undefined,
+          })
+        : undefined
+      : (options.reminders ?? undefined);
   const ci =
     options.ci === undefined
       ? machine && real
@@ -263,6 +400,8 @@ export function startCockpitServer(options: {
     ci,
     machine,
     control,
+    quality,
+    reminders,
     explore: options.explore ?? createExploreService(),
     explain: createExplainService({ complete: options.explain?.complete, dir: options.explain?.dir }),
   });
@@ -273,12 +412,12 @@ export function startCockpitServer(options: {
     fetch: (request, srv) => app.fetch(request, { ip: srv.requestIP(request) }),
   });
   bound = server.port ?? options.port;
-  if (usage) {
-    // The timer is unref'd, so it never keeps the process alive; stopping the listener stops it too.
-    const stopPolling = usage.start();
+  // The timers are unref'd, so they never keep the process alive; stopping the listener stops them too.
+  const stops = [usage?.start(), quality?.start(), reminders?.start()].filter((stop): stop is () => void => stop !== undefined);
+  if (stops.length > 0) {
     const stopServer = server.stop.bind(server);
     server.stop = (force?: boolean) => {
-      stopPolling();
+      for (const stop of stops) stop();
       return stopServer(force);
     };
   }

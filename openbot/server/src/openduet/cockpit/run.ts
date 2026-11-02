@@ -1,12 +1,14 @@
 /*
- * The only way the cockpit runs a program: a short list of read-only tools (git, gh, sysctl, ps, launchctl,
- * du, docker) plus the runner pause/resume calls, each as an argv array (no shell), with a fixed
+ * The only way the cockpit runs a program: a short list of read-only tools (git, gh, npm audit/outdated, sysctl,
+ * ps, launchctl, du, docker, one fixed osascript notification) plus the runner pause/resume calls, each as an argv array (no shell), with a fixed
  * environment, a timeout, and a cap on what it may print. Anything else is refused before it spawns.
  */
 
 /** The slice of a Bun subprocess the runner needs, so tests can inject a fake. */
 export type SpawnedProcess = {
   stdout: ReadableStream<Uint8Array>;
+  /** Only read for `gh api`: its first 4 KiB give the HTTP status. */
+  stderr?: ReadableStream<Uint8Array>;
   exited: Promise<number>;
   kill(signal?: string | number): void;
 };
@@ -25,6 +27,12 @@ export const GIT_FLAGS = [
 
 const GIT_TIMEOUT_MS = 10_000;
 const GH_TIMEOUT_MS = 25_000;
+const NPM_TIMEOUT_MS = 120_000;
+const OSASCRIPT_TIMEOUT_MS = 10_000;
+const NPM_MAX_STDOUT_BYTES = 8 * 1024 * 1024;
+const GH_API_MAX_STDOUT_BYTES = 4 * 1024 * 1024;
+const LOG_MAX_STDOUT_BYTES = 4 * 1024 * 1024;
+const STDERR_HEAD_BYTES = 4096;
 const MAX_STDOUT_BYTES = 1024 * 1024;
 const PS_MAX_STDOUT_BYTES = 2 * 1024 * 1024;
 const MAX_STDOUT_CEILING = 8 * 1024 * 1024;
@@ -34,8 +42,10 @@ const SLUG_SHAPE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 export const isSlug = (slug: string) =>
   SLUG_SHAPE.test(slug) && slug.split("/").every((part) => !/^\.+$/.test(part) && !part.startsWith("-"));
 
+const isGhApi = (argv: string[]) => argv[0] === "gh" && argv[1] === "api";
+
 const realSpawn: Spawn = (argv, { env }) =>
-  Bun.spawn(argv, { env, stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+  Bun.spawn(argv, { env, stdin: "ignore", stdout: "pipe", stderr: isGhApi(argv) ? "pipe" : "ignore" });
 
 /** The PATH of the server, plus the two folders docker and gh live in (Duet.app started from Finder lacks them). */
 function fixedPath(): string {
@@ -44,8 +54,9 @@ function fixedPath(): string {
   return parts.join(":");
 }
 
-function fixedEnv(): Record<string, string> {
+function fixedEnv(argv: string[] = []): Record<string, string> {
   return {
+    ...(argv[0] === "npm" ? { npm_config_update_notifier: "false", npm_config_fund: "false" } : {}),
     PATH: fixedPath(),
     HOME: process.env.HOME ?? "",
     GIT_TERMINAL_PROMPT: "0",
@@ -90,8 +101,12 @@ function gitArgsAllowed(a: string[]): boolean {
       }
       return false;
     }
+    case "ls-files":
+      return same(rest, ["-z"]) || same(rest, ["-z", "--others", "--exclude-standard"]);
     case "log":
       return (
+        same(rest, ["--since=30.days", "--name-only", "--format=", "--no-renames", "--no-merges"]) ||
+        same(rest, ["-1", "--format=%ct"]) ||
         same(rest, ["-15", "--format=%H%x1f%ct%x1f%an%x1f%s"]) ||
         same(rest, ["-8", "--format=%ct%x1f%h%x1f%s", "--", ".claude/session-notes.md"])
       );
@@ -102,7 +117,7 @@ function gitArgsAllowed(a: string[]): boolean {
     case "diff":
       return same(rest, ["--numstat", "-z", "--no-ext-diff", "--no-textconv", "--no-renames", EMPTY_TREE, "HEAD"]);
     case "for-each-ref":
-      return same(rest, [
+      return same(rest, ["--format=%(refname:short)%09%(committerdate:unix)", "refs/heads"]) || same(rest, [
         "--sort=-creatordate", "--count=30", "--format=%(refname:short)%09%(creatordate:unix)%09%(objectname)", "refs/tags",
       ]);
     default:
@@ -120,6 +135,59 @@ const WORK_DIR = /^\/(?:[^/\0]+\/)+actions-runner[\w.-]*\/_work$/;
 const RUNNER_PLIST = /^\/Users\/[^/]+\/Library\/LaunchAgents\/actions\.runner\.[\w.-]+\.plist$/;
 const CONTAINER_ID = /^[0-9a-f]{64}$/;
 const PS_ARGS = ["-axo", "pid=,ppid=,nice=,%cpu=,rss=,comm="];
+
+const GH_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const GH_BRANCH = /^[A-Za-z0-9._-]{1,100}$/;
+const GH_RUN_ID = /^\d{1,20}$/;
+
+/** The C4 quality scan's `gh api` paths: fixed query strings only, a checked slug, a checked branch or run id. */
+function qualityApiAllowed(api: string): boolean {
+  const [pathPart, query, ...extra] = api.split("?");
+  if (extra.length > 0) return false;
+  const seg = (pathPart ?? "").split("/");
+  if (seg[0] !== "repos" || seg.length < 3 || !isSlug(`${seg[1]}/${seg[2]}`)) return false;
+  const rest = seg.slice(3);
+  if (rest.length === 0) return query === undefined;
+  const key = rest.join("/");
+  switch (key) {
+    case "actions/runs": {
+      const m = /^per_page=100&created=%3E%3D(.+)$/.exec(query ?? "");
+      return m !== null && GH_DATE.test(m[1]!);
+    }
+    case "dependabot/alerts":
+      return query === "state=open&per_page=100";
+    case "code-scanning/alerts":
+      return query === "state=open&per_page=100";
+    case "secret-scanning/alerts":
+      return query === "state=open&per_page=100&hide_secret=true";
+    default:
+      break;
+  }
+  if (query !== undefined) return false;
+  if (rest.length === 4 && rest[0] === "actions" && rest[1] === "runs" && rest[3] === "jobs") return GH_RUN_ID.test(rest[2]!);
+  if (rest.length === 6 && rest[0] === "actions" && rest[1] === "runs" && rest[3] === "attempts" && rest[4] === "1" && rest[5] === "jobs") {
+    return GH_RUN_ID.test(rest[2]!);
+  }
+  if (rest.length === 3 && rest[0] === "branches" && rest[2] === "protection") {
+    return GH_BRANCH.test(rest[1]!) && !rest[1]!.startsWith("-") && !/^\.+$/.test(rest[1]!);
+  }
+  return false;
+}
+
+const NPM_REGISTRY = "--registry=https://registry.npmjs.org/";
+/** `npm audit|outdated` with scripts off, the registry pinned, and the project named by `--prefix` (no cwd). */
+function npmAllowed(rest: string[]): boolean {
+  const prefix = rest[5];
+  return (
+    rest.length === 6 && (rest[0] === "audit" || rest[0] === "outdated") && rest[1] === "--json" && rest[2] === "--ignore-scripts" &&
+    rest[3] === NPM_REGISTRY && rest[4] === "--prefix" && typeof prefix === "string" && prefix.startsWith("/") && noDotDot(prefix)
+  );
+}
+
+/** The one notification script: the title and body arrive as data (`item n of argv`), never in the script. */
+export const OSASCRIPT_HEAD = [
+  "/usr/bin/osascript", "-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run", "--",
+];
 
 const noDotDot = (path: string) => !path.split("/").includes("..");
 
@@ -167,6 +235,7 @@ function allowed(argv: string[]): boolean {
     }
     if (argv[1] === "api" && argv.length === 3) {
       const api = argv[2] ?? "";
+      if (qualityApiAllowed(api)) return true;
       if (RUNNERS_API.test(api) || RUNS_API.test(api)) return isSlug((RUNNERS_API.exec(api) ?? RUNS_API.exec(api))![1]!);
       const match = /^repos\/([^/]+\/[^/]+)\/(?:actions\/runs|releases)\?per_page=(\d+)$/.exec(argv[2] ?? "");
       if (match === null || !isSlug(match[1]!)) return false;
@@ -174,7 +243,12 @@ function allowed(argv: string[]): boolean {
     }
     return false;
   }
+  if (argv[0] === "/usr/bin/osascript") {
+    return argv.length === OSASCRIPT_HEAD.length + 2 && OSASCRIPT_HEAD.every((x, i) => argv[i] === x);
+  }
   switch (argv[0]) {
+    case "npm":
+      return npmAllowed(argv.slice(1));
     case "sysctl":
       return same(argv.slice(1), ["-n", "kern.memorystatus_level"]);
     case "ps":
@@ -199,6 +273,10 @@ export function timeoutFor(argv: string[]): number {
   switch (argv[0]) {
     case "gh":
       return GH_TIMEOUT_MS;
+    case "npm":
+      return NPM_TIMEOUT_MS;
+    case "/usr/bin/osascript":
+      return OSASCRIPT_TIMEOUT_MS;
     case "sysctl":
       return 3_000;
     case "ps":
@@ -229,20 +307,44 @@ async function readCapped(stream: ReadableStream<Uint8Array>, limit: number): Pr
   return Buffer.concat(chunks).toString("utf8");
 }
 
-/** Runs an allowed argv; stdout on a clean exit, null for anything else (refused, failed, timed out, too big). */
-export async function runAllowed(argv: string[], deps: RunDeps = {}): Promise<string | null> {
-  if (!allowed(argv)) return null;
+/** At most `limit` bytes of a stream, then stop reading. */
+async function readHead(stream: ReadableStream<Uint8Array>, limit: number): Promise<string> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (size < limit) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      size += value.byteLength;
+    }
+  } catch {
+    // an unreadable stderr just gives no status
+  } finally {
+    reader.cancel().catch(() => undefined);
+  }
+  return Buffer.concat(chunks).subarray(0, limit).toString("utf8");
+}
+
+type Exec = { out: string | null; code: number | null; stderr: string };
+
+/** Runs an allowed argv; `out` is null when refused, failed to start, timed out or too big. The exit code is the caller's to judge. */
+async function execAllowed(argv: string[], deps: RunDeps): Promise<Exec> {
+  const failed: Exec = { out: null, code: null, stderr: "" };
+  if (!allowed(argv)) return failed;
   const timeoutMs = deps.timeoutMs ?? timeoutFor(argv);
   const requested = deps.maxStdoutBytes;
-  const limit = Number.isFinite(requested) && requested! > 0
-      ? Math.min(requested!, MAX_STDOUT_CEILING)
-      : argv[0] === "ps" ? PS_MAX_STDOUT_BYTES : MAX_STDOUT_BYTES;
+  const defaultLimit =
+    argv[0] === "ps" ? PS_MAX_STDOUT_BYTES : argv[0] === "npm" ? NPM_MAX_STDOUT_BYTES : argv[0] === "git" && argv.includes("--name-only") ? LOG_MAX_STDOUT_BYTES : MAX_STDOUT_BYTES;
+  const limit = Number.isFinite(requested) && requested! > 0 ? Math.min(requested!, MAX_STDOUT_CEILING) : defaultLimit;
   let proc: SpawnedProcess;
   try {
-    proc = (deps.spawn ?? realSpawn)(argv, { env: fixedEnv() });
+    proc = (deps.spawn ?? realSpawn)(argv, { env: fixedEnv(argv) });
   } catch {
-    return null;
+    return failed;
   }
+  const stderrText = isGhApi(argv) && proc.stderr ? readHead(proc.stderr, STDERR_HEAD_BYTES) : Promise.resolve("");
   let timer: ReturnType<typeof setTimeout> | undefined;
   let timedOut = false;
   const timeout = new Promise<null>((resolve) => {
@@ -257,15 +359,21 @@ export async function runAllowed(argv: string[], deps: RunDeps = {}): Promise<st
     if (out === null) {
       // Too much output, or out of time: make sure the process is gone.
       proc.kill("SIGKILL");
-      return null;
+      return failed;
     }
     const code = await proc.exited;
-    return timedOut || code !== 0 ? null : out;
+    return timedOut ? failed : { out, code, stderr: await stderrText };
   } catch {
-    return null;
+    return failed;
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Runs an allowed argv; stdout on a clean exit, null for anything else (refused, failed, timed out, too big). */
+export async function runAllowed(argv: string[], deps: RunDeps = {}): Promise<string | null> {
+  const r = await execAllowed(argv, deps);
+  return r.code === 0 ? r.out : null;
 }
 
 /** `git <guard flags> -C path …args`; path must be absolute. */
@@ -276,4 +384,26 @@ export function runGit(path: string, args: string[], deps: RunDeps = {}): Promis
 /** `gh …args`, only the two shapes {@link runAllowed} lets through. */
 export function runGh(args: string[], deps: RunDeps = {}): Promise<string | null> {
   return runAllowed(["gh", ...args], deps);
+}
+
+export type GhApiResult = { ok: true; json: unknown } | { ok: false; status: number | null };
+
+/** One `gh api` call of a quality-scan shape: the parsed JSON, or only the HTTP status from stderr (never its text). */
+export async function runGhApi(path: string, deps: RunDeps = {}): Promise<GhApiResult> {
+  const r = await execAllowed(["gh", "api", path], { maxStdoutBytes: GH_API_MAX_STDOUT_BYTES, ...deps });
+  if (r.code === 0 && r.out !== null) {
+    try {
+      return { ok: true, json: JSON.parse(r.out) };
+    } catch {
+      return { ok: false, status: null };
+    }
+  }
+  const status = /HTTP (\d{3})/.exec(r.stderr)?.[1];
+  return { ok: false, status: status ? Number(status) : null };
+}
+
+/** `npm audit|outdated --json` for the project at `path` (absolute). Exit 0 and 1 both carry a report; anything else is null. */
+export async function runNpm(path: string, kind: "audit" | "outdated", deps: RunDeps = {}): Promise<string | null> {
+  const r = await execAllowed(["npm", kind, "--json", "--ignore-scripts", NPM_REGISTRY, "--prefix", path], deps);
+  return r.code === 0 || r.code === 1 ? r.out : null;
 }
