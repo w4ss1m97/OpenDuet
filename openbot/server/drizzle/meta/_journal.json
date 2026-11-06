@@ -477,6 +477,69 @@
       "when": 1793034639890,
       "tag": "0067_morning_brief_on",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1793398063549,
+      "tag": "0068_openduet_items",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1793429099499,
+      "tag": "0069_openduet_missions",
+      "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1793491531531,
+      "tag": "0070_openduet_interview_preps",
+      "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1793495075330,
+      "tag": "0071_openduet_interview_debriefs",
+      "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1793515082135,
+      "tag": "0072_openduet_job_offers",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1793545029810,
+      "tag": "0073_openduet_cv",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1793545961359,
+      "tag": "0074_openduet_revision",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1793575882587,
+      "tag": "0075_openduet_mail_drafts",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1793646516979,
+      "tag": "0076_openduet_revision_deep",
+      "breakpoints": true
     }
   ]
 }

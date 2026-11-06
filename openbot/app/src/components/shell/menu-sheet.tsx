@@ -19,6 +19,7 @@ import {
   conversationTitle,
   firstMessageQueryOptions,
 } from "@/lib/channels/conversation-title";
+import { remindersQueryOptions } from "@/lib/cockpit/reminders";
 import { deploymentCapabilitiesQueryOptions } from "@/lib/deployment/queries";
 import { archiveDuetChannelMutationOptions } from "@/lib/duet-channels/mutations";
 import type { DuetChannel } from "@/lib/duet-channels/queries";
@@ -127,6 +128,7 @@ export function MenuSheet({
   const navigate = useNavigate();
   const { data: user } = useQuery(currentUserQueryOptions());
   const { data: capabilities } = useQuery(deploymentCapabilitiesQueryOptions());
+  const { data: reminders } = useQuery(remindersQueryOptions());
   const signOut = useMutation(signOutMutationOptions(queryClient));
   const manage = useRememberedGroup(MANAGE_STORAGE_KEY);
   const archived = useRememberedGroup(ARCHIVED_STORAGE_KEY);
@@ -326,6 +328,71 @@ export function MenuSheet({
             ) : null}
           </div>
           <div className="mt-2 flex shrink-0 flex-col border-duet-hair border-t pt-2">
+            <Link
+              activeProps={{ className: "bg-duet-tile" }}
+              className={ROW}
+              onClick={close}
+              to="/cockpit/projects"
+            >
+              <RowIcon name="checkCircle" />
+              Cockpit
+            </Link>
+            <Link
+              activeProps={{ className: "bg-duet-tile" }}
+              className={ROW}
+              onClick={close}
+              to="/guide"
+            >
+              <RowIcon name="question" />
+              Guide
+            </Link>
+            <Link
+              activeProps={{ className: "bg-duet-tile" }}
+              className={ROW}
+              onClick={close}
+              to="/cockpit/usage"
+            >
+              <RowIcon name="activity" />
+              Usage
+            </Link>
+            <Link
+              activeProps={{ className: "bg-duet-tile" }}
+              className={ROW}
+              onClick={close}
+              to="/cockpit/ci"
+            >
+              <RowIcon name="repeat" />
+              CI
+            </Link>
+            <Link
+              activeProps={{ className: "bg-duet-tile" }}
+              className={ROW}
+              onClick={close}
+              to="/cockpit/machine"
+            >
+              <RowIcon name="box" />
+              Machine
+            </Link>
+            <Link
+              activeProps={{ className: "bg-duet-tile" }}
+              className={ROW}
+              onClick={close}
+              to="/cockpit/quality"
+            >
+              <RowIcon name="checkCircle" />
+              Quality
+            </Link>
+            <Link
+              activeProps={{ className: "bg-duet-tile" }}
+              className={ROW}
+              onClick={close}
+              to="/cockpit/reminders"
+            >
+              <RowIcon name="clock" />
+              {reminders?.dueCount
+                ? `Reminders (${reminders.dueCount})`
+                : "Reminders"}
+            </Link>
             <h2>
               <button
                 aria-controls={manage.id}

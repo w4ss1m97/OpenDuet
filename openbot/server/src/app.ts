@@ -115,6 +115,18 @@ import {
   type DuetChannelStore,
 } from "./openduet/channels";
 import { createPageRoutes, type PageStore } from "./openduet/pages";
+import type { AnarlogSource } from "./openduet/missions/anarlog";
+import type { DebriefStore } from "./openduet/missions/debrief-store";
+import { createItemRoutes } from "./openduet/items/routes";
+import type { ItemStore } from "./openduet/items/store";
+import type { PrepStore } from "./openduet/missions/prep-store";
+import { createCvRoutes } from "./openduet/job-offers/cv-routes";
+import { createOfferRoutes, type OfferRouteDeps } from "./openduet/job-offers/routes";
+import { createCareerRoutes, type CareerRouteDeps } from "./openduet/career/routes";
+import { createMailDraftRoutes, type MailDraftRouteDeps } from "./openduet/mail-drafts/routes";
+import { createRevisionRoutes, type RevisionRouteDeps } from "./openduet/revision/routes";
+import { createMissionRoutes } from "./openduet/missions/routes";
+import type { MissionStore } from "./openduet/missions/store";
 import { createSetupRoutes, type SetupSources } from "./openduet/setup";
 import type { TaskReportReader } from "./openduet/task-report";
 import {
@@ -458,6 +470,22 @@ export function createApp(
      */
     openduet?: {
       pages: PageStore;
+      /** Duet's items for the app's reminders and sorting. See openduet/items. */
+      items?: ItemStore;
+      /** The missions pipeline for the app. See openduet/missions. */
+      missions?: MissionStore;
+      /** Interview prep sheets, served beside items and missions. See openduet/missions/prep-store.ts. */
+      preps?: PrepStore;
+      /** Interview debriefs, served beside the prep sheets. `source` null: Anarlog is not set up. */
+      debrief?: { store: DebriefStore; source: AnarlogSource | null };
+      /** Job offers (A3a): list, dismiss, apply, paste. Needs `missions` to be served. See openduet/job-offers. */
+      offers?: Omit<OfferRouteDeps, "missions">;
+      /** Revision deck (A3c). Needs `items` and `offers` (focus) to be served. See openduet/revision. */
+      revision?: Omit<RevisionRouteDeps, "items" | "offers">;
+      /** Weekly career check (A5). Read-only, computed in code. See openduet/career. */
+      career?: CareerRouteDeps;
+      /** Gmail drafts (A4): relance and application mails, pushed as Gmail drafts on the owner's say. See openduet/mail-drafts. */
+      mailDrafts?: MailDraftRouteDeps;
       setup?: SetupSources;
       tasks?: TaskStore;
       intake?: TaskIntake;
@@ -1704,6 +1732,41 @@ export function createApp(
       "/api/openduet/pages",
       createPageRoutes(coworker.openduet.pages, requireUser),
     );
+  if (coworker?.openduet?.items)
+    app.route(
+      "/api/openduet/items",
+      createItemRoutes(
+        coworker.openduet.items,
+        requireUser,
+        coworker.openduet.missions && coworker.openduet.preps
+          ? { missions: coworker.openduet.missions, preps: coworker.openduet.preps, debrief: coworker.openduet.debrief }
+          : undefined,
+      ),
+    );
+  if (coworker?.openduet?.missions)
+    app.route(
+      "/api/openduet/missions",
+      createMissionRoutes(coworker.openduet.missions, requireUser, coworker.openduet.preps),
+    );
+  if (coworker?.openduet?.missions && coworker.openduet.offers)
+    app.route(
+      "/api/openduet/offers",
+      createOfferRoutes({ ...coworker.openduet.offers, missions: coworker.openduet.missions }, requireUser),
+    );
+  if (coworker?.openduet?.revision && coworker.openduet.items && coworker.openduet.offers)
+    app.route(
+      "/api/openduet/revision",
+      createRevisionRoutes(
+        { ...coworker.openduet.revision, items: coworker.openduet.items, offers: coworker.openduet.offers.store },
+        requireUser,
+      ),
+    );
+  if (coworker?.openduet?.career)
+    app.route("/api/openduet/career", createCareerRoutes(coworker.openduet.career, requireUser));
+  if (coworker?.openduet?.offers?.cv)
+    app.route("/api/openduet/cv", createCvRoutes(coworker.openduet.offers.cv, requireUser));
+  if (coworker?.openduet?.mailDrafts)
+    app.route("/api/openduet/mail-drafts", createMailDraftRoutes(coworker.openduet.mailDrafts, requireUser));
   /*
    * Signed in, unlike `/api/capabilities`, which anybody can read. The checklist names what this
    * deployment has and lacks, and for an admin which variables would close a gap, which is not a

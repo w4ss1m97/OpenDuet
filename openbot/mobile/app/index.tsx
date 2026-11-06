@@ -138,6 +138,12 @@ export default function Home() {
           <Link href="/approvals" style={{ fontSize: 18, color: "#2563eb" }}>
             Questions and approvals
           </Link>
+          <Link href="/items" style={{ fontSize: 18, color: "#2563eb" }}>
+            À trier
+          </Link>
+          <Link href="/missions" style={{ fontSize: 18, color: "#2563eb" }}>
+            Missions
+          </Link>
           <Link href="/bots" style={{ fontSize: 18, color: "#2563eb" }}>
             Bots, routines and computers
           </Link>

@@ -6,7 +6,20 @@ import type { Database } from "../db/client";
 import { users } from "../db/schema";
 import { createProactiveStore } from "../proactive/store";
 import { ProactiveNotFoundError } from "../proactive/types";
-import { buildMorningBrief, type CallTool, openduetTools } from "./brief";
+import { type BriefInterview, type BriefMission, type BriefOffer, type BriefRevision, type BriefWeekly, buildMorningBrief, type CallTool, openduetTools } from "./brief";
+import { createCareerStore, type CareerStore } from "./career/store";
+import { defaultWeek, parisWeekday } from "./career/week";
+import { summarizeWeek, weeklyBriefLines } from "./career/weekly";
+import { createOfferStore, type OfferStore } from "./job-offers/store";
+import { lastIntakeReport } from "./items/intake";
+import { parisDayAt } from "./items/paris-time";
+import { createItemStore, type ItemStore } from "./items/store";
+import { intakeReportTools } from "./items/tool";
+import { createRevisionStore, type RevisionStore } from "./revision/store";
+import { focusOffers } from "./revision/routes";
+import { createPrepStore, type PrepStore } from "./missions/prep-store";
+import { createMissionStore, type MissionStore } from "./missions/store";
+import { missionTools } from "./missions/tool";
 import { offerTools } from "./offers";
 import { createPageStore, type PageStore, pageTools } from "./pages";
 import { replyTools } from "./replies";
@@ -19,6 +32,101 @@ import {
   taskTools,
 } from "./tasks";
 import type { Complete } from "./triage";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** The brief's missions: open and active, how long each has been in its stage, and whether a relance waits. */
+export async function loadBriefMissions(
+  store: Pick<MissionStore, "list" | "listRelances">,
+  ownerUserId: string,
+  now: Date,
+): Promise<BriefMission[]> {
+  const [open, drafts] = await Promise.all([
+    store.list(ownerUserId, { open: true, review: ["active"] }),
+    store.listRelances(ownerUserId, { status: "draft" }),
+  ]);
+  const waiting = new Set(drafts.map((r) => r.missionId));
+  return open.map((m) => ({
+    id: m.id,
+    title: m.title,
+    stage: m.stage,
+    daysInStage: Math.max(0, Math.floor((now.getTime() - m.stageEnteredAt.getTime()) / DAY_MS)),
+    relanceReady: waiting.has(m.id),
+  }));
+}
+
+/** The brief's interviews: tomorrow in Paris, each with its sheet when one exists. */
+export async function loadBriefInterviews(
+  items: Pick<ItemStore, "listUpcomingInterviews">,
+  preps: Pick<PrepStore, "getByItem">,
+  ownerUserId: string,
+  now: Date,
+): Promise<BriefInterview[]> {
+  const tomorrow = await items.listUpcomingInterviews(ownerUserId, parisDayAt(now, 1, 0), parisDayAt(now, 2, 0));
+  return Promise.all(
+    tomorrow.map(async (item) => {
+      const prep = await preps.getByItem(ownerUserId, item.id);
+      return {
+        itemId: item.id,
+        title: item.title,
+        dueAt: (item.dueAt as Date).toISOString(),
+        missionId: item.missionId,
+        prep: prep ? { status: prep.status, content: prep.content } : null,
+      };
+    }),
+  );
+}
+
+/** The brief's offers: shown, scored in the last 24 hours, best five. */
+export async function loadBriefOffers(
+  store: Pick<OfferStore, "topShown">,
+  ownerUserId: string,
+  now: Date,
+): Promise<BriefOffer[]> {
+  const rows = await store.topShown(ownerUserId, new Date(now.getTime() - DAY_MS), 5);
+  return rows.map((o) => ({
+    id: o.id,
+    title: o.title,
+    company: o.company,
+    platform: o.platform,
+    score: o.score as number,
+    reasons: o.reasons,
+    tjmMax: o.tjmMax,
+    remote: o.remote,
+  }));
+}
+
+/**
+ * The brief's revision: cards due today and new ones, and the company of an interview within three days
+ * (its offer's first three skills). Null when the deck is empty.
+ */
+export async function loadBriefRevision(
+  deps: {
+    revision: Pick<RevisionStore, "countDue">;
+    items: Pick<ItemStore, "listUpcomingInterviews">;
+    offers: Pick<OfferStore, "listByMissionIds">;
+  },
+  ownerUserId: string,
+  now: Date,
+): Promise<BriefRevision | null> {
+  const { dueToday, newCount } = await deps.revision.countDue(ownerUserId, now);
+  if (dueToday === 0 && newCount === 0) return null;
+  const [next] = await focusOffers(deps, ownerUserId, now);
+  if (!next?.offer.company) return { dueToday, newCount };
+  return { dueToday, newCount, focus: { company: next.offer.company, skills: next.offer.skills.slice(0, 3) } };
+}
+
+/** The brief's weekly check: last completed week's lines on a Paris Monday, null on any other day. */
+export async function loadBriefWeekly(
+  store: Pick<CareerStore, "readWeek">,
+  ownerUserId: string,
+  now: Date,
+): Promise<BriefWeekly | null> {
+  if (parisWeekday(now) !== 1) return null;
+  const week = defaultWeek(now);
+  const check = summarizeWeek(await store.readWeek(ownerUserId, week, now), week, now);
+  return { week: week.label, lines: weeklyBriefLines(check) };
+}
 
 /** How a card the person asked for is told from research's: its run id starts with this. */
 export const ASKED_RUN_PREFIX = "asked:";
@@ -177,6 +285,12 @@ export function createOpenDuetTools(deps: {
     });
   const proactive = createProactiveStore(deps.database);
   const pages = deps.pages ?? createPageStore(deps.database);
+  const items = createItemStore(deps.database);
+  const missions = createMissionStore(deps.database);
+  const preps = createPrepStore(deps.database);
+  const offers = createOfferStore(deps.database);
+  const revision = createRevisionStore(deps.database);
+  const career = createCareerStore(deps.database);
   return (actorId, botId, initiator) => [
     ...openduetTools({
       actorId,
@@ -195,6 +309,11 @@ export function createOpenDuetTools(deps: {
             callTool: deps.callTool,
             complete: deps.complete,
             model: deps.model,
+            missions: (ownerUserId) => loadBriefMissions(missions, ownerUserId, new Date()),
+            interviews: (ownerUserId) => loadBriefInterviews(items, preps, ownerUserId, new Date()),
+            offers: (ownerUserId) => loadBriefOffers(offers, ownerUserId, new Date()),
+            revision: (ownerUserId) => loadBriefRevision({ revision, items, offers }, ownerUserId, new Date()),
+            weekly: (ownerUserId) => loadBriefWeekly(career, ownerUserId, new Date()),
           },
           input,
         ),
@@ -222,5 +341,12 @@ export function createOpenDuetTools(deps: {
       save: (input) => pages.save(actorId, botId, input),
       initiator,
     }),
+    ...intakeReportTools({
+      actorId,
+      initiator,
+      store: items,
+      report: lastIntakeReport,
+    }),
+    ...missionTools({ actorId, initiator, store: missions }),
   ];
 }

@@ -439,6 +439,8 @@ test("the drawer reads Everything, the channels, New channel, Archived folded, t
     `Glazes${glazes.purpose}`,
     "New channel",
     "Archived",
+    "Cockpit",
+    "Usage",
     "Manage",
     "Settings",
     "Sign out",
@@ -764,6 +766,8 @@ test("with no channels yet the drawer is Everything and New channel, and no Arch
   expect(menuRows(dialog)).toEqual([
     `Everything${EVERYTHING_LINE}`,
     "New channel",
+    "Cockpit",
+    "Usage",
     "Manage",
     "Settings",
   ]);

@@ -47,13 +47,18 @@ export const Route = createFileRoute("/_authed/_app/channel/new")({
    * search values are JSON-parsed, so a Bot id made of digits would otherwise arrive as a number
    * and the link would open an empty composer instead of the one it names.
    */
-  validateSearch: (search: Record<string, unknown>): { agent?: string } =>
-    searchTextEntry("agent", search.agent),
+  // `text` prefills the composer (the guide's phrases); nothing is sent until the person sends it.
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { agent?: string; text?: string } => ({
+    ...searchTextEntry("agent", search.agent),
+    ...searchTextEntry("text", search.text),
+  }),
   component: RouteComponent,
 });
 
 function RouteComponent() {
-  const { agent } = Route.useSearch();
+  const { agent, text } = Route.useSearch();
   const navigate = Route.useNavigate();
   const { startChosen, startGroup, pending } = useStartChannel();
   const { data: profiles, isError: rosterError } = useQuery(
@@ -203,6 +208,7 @@ function RouteComponent() {
       // Choosing a coworker answers the "To:" field, so the message is what remains: the caret
       // lands in the composer the moment a recipient exists, whether picked here or in the URL.
       autoFocus
+      {...(text ? { initialValue: text } : {})}
       // Commands must be loaded before the first channel message is sent.
       commands={skillCommands}
       disabled={

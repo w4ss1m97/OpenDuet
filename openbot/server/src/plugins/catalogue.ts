@@ -394,13 +394,16 @@ const REVIEWED: readonly CatalogueEntry[] = Object.freeze([
       tokenUrl: "https://oauth2.googleapis.com/token",
       revokeUrl: "https://oauth2.googleapis.com/revoke",
       /*
-       * Read mail, send mail, read the calendar, and nothing wider. `gmail.send` can send but not
-       * read, trash or label; `gmail.modify` would be one string instead of two and would also let
-       * a Bot archive, label and trash mail. Calendar is read-only because nothing here writes to it.
+       * Read mail, send mail, draft mail, read the calendar, and nothing wider. `gmail.send` can send
+       * but not read, trash or label, and cannot create a draft; `gmail.compose` is what drafts need,
+       * and adds only reading and editing drafts to what is already granted. `gmail.modify` would be
+       * one string instead of three and would also let a Bot archive, label and trash mail. Calendar
+       * is read-only because nothing here writes to it.
        */
       scopes: Object.freeze([
         "https://www.googleapis.com/auth/gmail.readonly",
         "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/gmail.compose",
         "https://www.googleapis.com/auth/calendar.readonly",
       ]),
       // Load bearing for Google, for the reasons given on the Drive entry.
@@ -411,7 +414,7 @@ const REVIEWED: readonly CatalogueEntry[] = Object.freeze([
     },
     /*
      * BOTH LISTS, so a tool that is on neither is a write. The transport advertises exactly these
-     * four today; a fifth added to the adapter and forgotten here classifies as a write rather than
+     * five today; a sixth added to the adapter and forgotten here classifies as a write rather than
      * slipping through as a read, which is the direction a missed entry should fail in.
      */
     readTools: Object.freeze([
@@ -419,7 +422,7 @@ const REVIEWED: readonly CatalogueEntry[] = Object.freeze([
       "gmail_read_message",
       "calendar_list_events",
     ]),
-    writeTools: Object.freeze(["gmail_send_reply"]),
+    writeTools: Object.freeze(["gmail_send_reply", "gmail_create_draft"]),
     docsUrl: "https://developers.google.com/workspace/gmail/api/guides",
   },
   {

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Local start page only. No remote URLs are listed, so http://localhost:3010 gets no IPC.",
+  "windows": ["main"],
+  "permissions": []
+}

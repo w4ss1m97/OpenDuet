@@ -36,6 +36,8 @@ describe("the suggest_replies tool", () => {
       "openduet/offer_task",
       "openduet/read_page",
       "openduet/make_page",
+      "openduet/intake_report",
+      "openduet/mission_update",
     ]);
   });
 

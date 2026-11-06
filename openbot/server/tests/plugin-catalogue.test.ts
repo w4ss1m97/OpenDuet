@@ -241,10 +241,11 @@ describe("Gmail and Google Calendar", () => {
     });
   });
 
-  test("asks to read mail, send mail and read the calendar, and nothing wider", () => {
+  test("asks to read, send and draft mail and read the calendar, and nothing wider", () => {
     expect(entry?.auth.kind === "user-oauth" ? entry.auth.scopes : []).toEqual([
       "https://www.googleapis.com/auth/gmail.readonly",
       "https://www.googleapis.com/auth/gmail.send",
+      "https://www.googleapis.com/auth/gmail.compose",
       "https://www.googleapis.com/auth/calendar.readonly",
     ]);
   });
@@ -255,7 +256,17 @@ describe("Gmail and Google Calendar", () => {
       "gmail_read_message",
       "calendar_list_events",
     ]);
-    expect(entry?.writeTools).toEqual(["gmail_send_reply"]);
+    expect(entry?.writeTools).toEqual([
+      "gmail_send_reply",
+      "gmail_create_draft",
+    ]);
+  });
+
+  test("creating a draft is a write, and nothing can talk it down to a read", () => {
+    expect(classifyTool(entry, "gmail_create_draft", true)).toBe("write");
+    expect(classifyTool(entry, "gmail_create_draft", true, "read")).toBe(
+      "write",
+    );
   });
 
   test("sending a reply is a write, and nothing can talk it down to a read", () => {
@@ -335,7 +346,10 @@ describe("pointing Gmail and Calendar at a fake Google", () => {
       reviewed.auth.authorizationParams,
     );
     expect(workspace.readTools).toEqual(reviewed.readTools);
-    expect(workspace.writeTools).toEqual(["gmail_send_reply"]);
+    expect(workspace.writeTools).toEqual([
+      "gmail_send_reply",
+      "gmail_create_draft",
+    ]);
   });
 
   test("an unset NODE_ENV is development, which is what a laptop has", () => {

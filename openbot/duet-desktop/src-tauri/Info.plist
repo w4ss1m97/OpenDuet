@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- The cockpit reads the projects listed in ~/.claude/cockpit-projects.txt, often under these folders. -->
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>Duet's cockpit reads your projects on the Desktop (git status, notes) to show them. It never changes them.</string>
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>Duet's cockpit reads your projects in Documents (git status, notes) to show them. It never changes them.</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>Duet's cockpit reads your projects in Downloads (git status, notes) to show them. It never changes them.</string>
+</dict>
+</plist>

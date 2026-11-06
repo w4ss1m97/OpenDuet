@@ -20,6 +20,7 @@ import { Route as AuthedAppActivityRouteImport } from './routes/_authed/_app/act
 import { Route as AuthedAppApprovalsRouteImport } from './routes/_authed/_app/approvals'
 import { Route as AuthedAppBotRouteImport } from './routes/_authed/_app/bot'
 import { Route as AuthedAppCapabilitiesRouteImport } from './routes/_authed/_app/capabilities'
+import { Route as AuthedAppGuideRouteImport } from './routes/_authed/_app/guide'
 import { Route as AuthedAppInboxRouteImport } from './routes/_authed/_app/inbox'
 import { Route as AuthedAppMakeRouteImport } from './routes/_authed/_app/make'
 import { Route as AuthedAppMemoryRouteImport } from './routes/_authed/_app/memory'
@@ -57,6 +58,12 @@ import { Route as AuthedAppCapabilitiesSkillsRouteImport } from './routes/_authe
 import { Route as AuthedAppChannelChannelIdRouteImport } from './routes/_authed/_app/channel/$channelId'
 import { Route as AuthedAppChannelNewRouteImport } from './routes/_authed/_app/channel/new'
 import { Route as AuthedAppChannelsChannelIdRouteImport } from './routes/_authed/_app/channels.$channelId'
+import { Route as AuthedAppCockpitCiRouteImport } from './routes/_authed/_app/cockpit.ci'
+import { Route as AuthedAppCockpitMachineRouteImport } from './routes/_authed/_app/cockpit.machine'
+import { Route as AuthedAppCockpitProjectsRouteImport } from './routes/_authed/_app/cockpit.projects'
+import { Route as AuthedAppCockpitQualityRouteImport } from './routes/_authed/_app/cockpit.quality'
+import { Route as AuthedAppCockpitRemindersRouteImport } from './routes/_authed/_app/cockpit.reminders'
+import { Route as AuthedAppCockpitUsageRouteImport } from './routes/_authed/_app/cockpit.usage'
 import { Route as AuthedAppConnectionsIndexRouteImport } from './routes/_authed/_app/connections.index'
 import { Route as AuthedAppConnectionsKeyRouteImport } from './routes/_authed/_app/connections.$key'
 import { Route as AuthedAppGroupChannelIdRouteImport } from './routes/_authed/_app/group/$channelId'
@@ -84,7 +91,12 @@ import { Route as AuthedAppBotsAgentIdResponsibilitiesRouteImport } from './rout
 import { Route as AuthedAppBotsAgentIdRoutinesRouteImport } from './routes/_authed/_app/bots.$agentId.routines'
 import { Route as AuthedAppBotsAgentIdSetupRouteImport } from './routes/_authed/_app/bots.$agentId.setup'
 import { Route as AuthedAppBotsAgentIdSharingRouteImport } from './routes/_authed/_app/bots.$agentId.sharing'
+import { Route as AuthedAppCockpitProjectsNameRouteImport } from './routes/_authed/_app/cockpit.projects_.$name'
+import { Route as AuthedAppCockpitQualityNameRouteImport } from './routes/_authed/_app/cockpit.quality_.$name'
 import { Route as AuthedAppTasksQuestionsQuestionIdRouteImport } from './routes/_authed/_app/tasks.questions.$questionId'
+import { Route as AuthedAppCockpitProjectsNameExploreRouteImport } from './routes/_authed/_app/cockpit.projects_.$name_.explore'
+import { Route as AuthedAppCockpitUsageProjectNameRouteImport } from './routes/_authed/_app/cockpit.usage_.project.$name'
+import { Route as AuthedAppCockpitUsageSessionIdRouteImport } from './routes/_authed/_app/cockpit.usage_.session.$id'
 import { Route as AuthedAdminPluginsKeyBotsAgentIdRouteImport } from './routes/_authed/admin/plugins/$key_.bots.$agentId'
 import { Route as AuthedAdminPluginsKeyToolsToolRouteImport } from './routes/_authed/admin/plugins/$key_.tools.$tool'
 
@@ -139,6 +151,11 @@ const AuthedAppBotRoute = AuthedAppBotRouteImport.update({
 const AuthedAppCapabilitiesRoute = AuthedAppCapabilitiesRouteImport.update({
   id: '/capabilities',
   path: '/capabilities',
+  getParentRoute: () => AuthedAppRoute,
+} as any)
+const AuthedAppGuideRoute = AuthedAppGuideRouteImport.update({
+  id: '/guide',
+  path: '/guide',
   getParentRoute: () => AuthedAppRoute,
 } as any)
 const AuthedAppInboxRoute = AuthedAppInboxRouteImport.update({
@@ -334,6 +351,38 @@ const AuthedAppChannelsChannelIdRoute =
     path: '/channels/$channelId',
     getParentRoute: () => AuthedAppRoute,
   } as any)
+const AuthedAppCockpitCiRoute = AuthedAppCockpitCiRouteImport.update({
+  id: '/cockpit/ci',
+  path: '/cockpit/ci',
+  getParentRoute: () => AuthedAppRoute,
+} as any)
+const AuthedAppCockpitMachineRoute = AuthedAppCockpitMachineRouteImport.update({
+  id: '/cockpit/machine',
+  path: '/cockpit/machine',
+  getParentRoute: () => AuthedAppRoute,
+} as any)
+const AuthedAppCockpitProjectsRoute =
+  AuthedAppCockpitProjectsRouteImport.update({
+    id: '/cockpit/projects',
+    path: '/cockpit/projects',
+    getParentRoute: () => AuthedAppRoute,
+  } as any)
+const AuthedAppCockpitQualityRoute = AuthedAppCockpitQualityRouteImport.update({
+  id: '/cockpit/quality',
+  path: '/cockpit/quality',
+  getParentRoute: () => AuthedAppRoute,
+} as any)
+const AuthedAppCockpitRemindersRoute =
+  AuthedAppCockpitRemindersRouteImport.update({
+    id: '/cockpit/reminders',
+    path: '/cockpit/reminders',
+    getParentRoute: () => AuthedAppRoute,
+  } as any)
+const AuthedAppCockpitUsageRoute = AuthedAppCockpitUsageRouteImport.update({
+  id: '/cockpit/usage',
+  path: '/cockpit/usage',
+  getParentRoute: () => AuthedAppRoute,
+} as any)
 const AuthedAppConnectionsIndexRoute =
   AuthedAppConnectionsIndexRouteImport.update({
     id: '/connections/',
@@ -487,11 +536,41 @@ const AuthedAppBotsAgentIdSharingRoute =
     path: '/bots/$agentId/sharing',
     getParentRoute: () => AuthedAppRoute,
   } as any)
+const AuthedAppCockpitProjectsNameRoute =
+  AuthedAppCockpitProjectsNameRouteImport.update({
+    id: '/cockpit/projects_/$name',
+    path: '/cockpit/projects/$name',
+    getParentRoute: () => AuthedAppRoute,
+  } as any)
+const AuthedAppCockpitQualityNameRoute =
+  AuthedAppCockpitQualityNameRouteImport.update({
+    id: '/cockpit/quality_/$name',
+    path: '/cockpit/quality/$name',
+    getParentRoute: () => AuthedAppRoute,
+  } as any)
 const AuthedAppTasksQuestionsQuestionIdRoute =
   AuthedAppTasksQuestionsQuestionIdRouteImport.update({
     id: '/questions/$questionId',
     path: '/questions/$questionId',
     getParentRoute: () => AuthedAppTasksRoute,
+  } as any)
+const AuthedAppCockpitProjectsNameExploreRoute =
+  AuthedAppCockpitProjectsNameExploreRouteImport.update({
+    id: '/cockpit/projects_/$name_/explore',
+    path: '/cockpit/projects/$name/explore',
+    getParentRoute: () => AuthedAppRoute,
+  } as any)
+const AuthedAppCockpitUsageProjectNameRoute =
+  AuthedAppCockpitUsageProjectNameRouteImport.update({
+    id: '/cockpit/usage_/project/$name',
+    path: '/cockpit/usage/project/$name',
+    getParentRoute: () => AuthedAppRoute,
+  } as any)
+const AuthedAppCockpitUsageSessionIdRoute =
+  AuthedAppCockpitUsageSessionIdRouteImport.update({
+    id: '/cockpit/usage_/session/$id',
+    path: '/cockpit/usage/session/$id',
+    getParentRoute: () => AuthedAppRoute,
   } as any)
 const AuthedAdminPluginsKeyBotsAgentIdRoute =
   AuthedAdminPluginsKeyBotsAgentIdRouteImport.update({
@@ -516,6 +595,7 @@ export interface FileRoutesByFullPath {
   '/approvals': typeof AuthedAppApprovalsRoute
   '/bot': typeof AuthedAppBotRoute
   '/capabilities': typeof AuthedAppCapabilitiesRouteWithChildren
+  '/guide': typeof AuthedAppGuideRoute
   '/inbox': typeof AuthedAppInboxRoute
   '/make': typeof AuthedAppMakeRouteWithChildren
   '/memory': typeof AuthedAppMemoryRoute
@@ -550,6 +630,12 @@ export interface FileRoutesByFullPath {
   '/channel/$channelId': typeof AuthedAppChannelChannelIdRoute
   '/channel/new': typeof AuthedAppChannelNewRoute
   '/channels/$channelId': typeof AuthedAppChannelsChannelIdRoute
+  '/cockpit/ci': typeof AuthedAppCockpitCiRoute
+  '/cockpit/machine': typeof AuthedAppCockpitMachineRoute
+  '/cockpit/projects': typeof AuthedAppCockpitProjectsRoute
+  '/cockpit/quality': typeof AuthedAppCockpitQualityRoute
+  '/cockpit/reminders': typeof AuthedAppCockpitRemindersRoute
+  '/cockpit/usage': typeof AuthedAppCockpitUsageRoute
   '/connections/$key': typeof AuthedAppConnectionsKeyRoute
   '/group/$channelId': typeof AuthedAppGroupChannelIdRoute
   '/group/new': typeof AuthedAppGroupNewRoute
@@ -579,8 +665,13 @@ export interface FileRoutesByFullPath {
   '/bots/$agentId/routines': typeof AuthedAppBotsAgentIdRoutinesRoute
   '/bots/$agentId/setup': typeof AuthedAppBotsAgentIdSetupRoute
   '/bots/$agentId/sharing': typeof AuthedAppBotsAgentIdSharingRoute
+  '/cockpit/projects/$name': typeof AuthedAppCockpitProjectsNameRoute
+  '/cockpit/quality/$name': typeof AuthedAppCockpitQualityNameRoute
   '/tasks/questions/$questionId': typeof AuthedAppTasksQuestionsQuestionIdRoute
   '/bots/$agentId/': typeof AuthedAppBotsAgentIdIndexRoute
+  '/cockpit/projects/$name/explore': typeof AuthedAppCockpitProjectsNameExploreRoute
+  '/cockpit/usage/project/$name': typeof AuthedAppCockpitUsageProjectNameRoute
+  '/cockpit/usage/session/$id': typeof AuthedAppCockpitUsageSessionIdRoute
   '/admin/plugins/$key/bots/$agentId': typeof AuthedAdminPluginsKeyBotsAgentIdRoute
   '/admin/plugins/$key/tools/$tool': typeof AuthedAdminPluginsKeyToolsToolRoute
 }
@@ -591,6 +682,7 @@ export interface FileRoutesByTo {
   '/activity': typeof AuthedAppActivityRoute
   '/approvals': typeof AuthedAppApprovalsRoute
   '/bot': typeof AuthedAppBotRoute
+  '/guide': typeof AuthedAppGuideRoute
   '/inbox': typeof AuthedAppInboxRoute
   '/make': typeof AuthedAppMakeRouteWithChildren
   '/memory': typeof AuthedAppMemoryRoute
@@ -625,6 +717,12 @@ export interface FileRoutesByTo {
   '/channel/$channelId': typeof AuthedAppChannelChannelIdRoute
   '/channel/new': typeof AuthedAppChannelNewRoute
   '/channels/$channelId': typeof AuthedAppChannelsChannelIdRoute
+  '/cockpit/ci': typeof AuthedAppCockpitCiRoute
+  '/cockpit/machine': typeof AuthedAppCockpitMachineRoute
+  '/cockpit/projects': typeof AuthedAppCockpitProjectsRoute
+  '/cockpit/quality': typeof AuthedAppCockpitQualityRoute
+  '/cockpit/reminders': typeof AuthedAppCockpitRemindersRoute
+  '/cockpit/usage': typeof AuthedAppCockpitUsageRoute
   '/connections/$key': typeof AuthedAppConnectionsKeyRoute
   '/group/$channelId': typeof AuthedAppGroupChannelIdRoute
   '/group/new': typeof AuthedAppGroupNewRoute
@@ -654,8 +752,13 @@ export interface FileRoutesByTo {
   '/bots/$agentId/routines': typeof AuthedAppBotsAgentIdRoutinesRoute
   '/bots/$agentId/setup': typeof AuthedAppBotsAgentIdSetupRoute
   '/bots/$agentId/sharing': typeof AuthedAppBotsAgentIdSharingRoute
+  '/cockpit/projects/$name': typeof AuthedAppCockpitProjectsNameRoute
+  '/cockpit/quality/$name': typeof AuthedAppCockpitQualityNameRoute
   '/tasks/questions/$questionId': typeof AuthedAppTasksQuestionsQuestionIdRoute
   '/bots/$agentId': typeof AuthedAppBotsAgentIdIndexRoute
+  '/cockpit/projects/$name/explore': typeof AuthedAppCockpitProjectsNameExploreRoute
+  '/cockpit/usage/project/$name': typeof AuthedAppCockpitUsageProjectNameRoute
+  '/cockpit/usage/session/$id': typeof AuthedAppCockpitUsageSessionIdRoute
   '/admin/plugins/$key/bots/$agentId': typeof AuthedAdminPluginsKeyBotsAgentIdRoute
   '/admin/plugins/$key/tools/$tool': typeof AuthedAdminPluginsKeyToolsToolRoute
 }
@@ -671,6 +774,7 @@ export interface FileRoutesById {
   '/_authed/_app/approvals': typeof AuthedAppApprovalsRoute
   '/_authed/_app/bot': typeof AuthedAppBotRoute
   '/_authed/_app/capabilities': typeof AuthedAppCapabilitiesRouteWithChildren
+  '/_authed/_app/guide': typeof AuthedAppGuideRoute
   '/_authed/_app/inbox': typeof AuthedAppInboxRoute
   '/_authed/_app/make': typeof AuthedAppMakeRouteWithChildren
   '/_authed/_app/memory': typeof AuthedAppMemoryRoute
@@ -706,6 +810,12 @@ export interface FileRoutesById {
   '/_authed/_app/channel/$channelId': typeof AuthedAppChannelChannelIdRoute
   '/_authed/_app/channel/new': typeof AuthedAppChannelNewRoute
   '/_authed/_app/channels/$channelId': typeof AuthedAppChannelsChannelIdRoute
+  '/_authed/_app/cockpit/ci': typeof AuthedAppCockpitCiRoute
+  '/_authed/_app/cockpit/machine': typeof AuthedAppCockpitMachineRoute
+  '/_authed/_app/cockpit/projects': typeof AuthedAppCockpitProjectsRoute
+  '/_authed/_app/cockpit/quality': typeof AuthedAppCockpitQualityRoute
+  '/_authed/_app/cockpit/reminders': typeof AuthedAppCockpitRemindersRoute
+  '/_authed/_app/cockpit/usage': typeof AuthedAppCockpitUsageRoute
   '/_authed/_app/connections/$key': typeof AuthedAppConnectionsKeyRoute
   '/_authed/_app/group/$channelId': typeof AuthedAppGroupChannelIdRoute
   '/_authed/_app/group/new': typeof AuthedAppGroupNewRoute
@@ -735,8 +845,13 @@ export interface FileRoutesById {
   '/_authed/_app/bots/$agentId/routines': typeof AuthedAppBotsAgentIdRoutinesRoute
   '/_authed/_app/bots/$agentId/setup': typeof AuthedAppBotsAgentIdSetupRoute
   '/_authed/_app/bots/$agentId/sharing': typeof AuthedAppBotsAgentIdSharingRoute
+  '/_authed/_app/cockpit/projects_/$name': typeof AuthedAppCockpitProjectsNameRoute
+  '/_authed/_app/cockpit/quality_/$name': typeof AuthedAppCockpitQualityNameRoute
   '/_authed/_app/tasks/questions/$questionId': typeof AuthedAppTasksQuestionsQuestionIdRoute
   '/_authed/_app/bots/$agentId/': typeof AuthedAppBotsAgentIdIndexRoute
+  '/_authed/_app/cockpit/projects_/$name_/explore': typeof AuthedAppCockpitProjectsNameExploreRoute
+  '/_authed/_app/cockpit/usage_/project/$name': typeof AuthedAppCockpitUsageProjectNameRoute
+  '/_authed/_app/cockpit/usage_/session/$id': typeof AuthedAppCockpitUsageSessionIdRoute
   '/_authed/admin/plugins/$key_/bots/$agentId': typeof AuthedAdminPluginsKeyBotsAgentIdRoute
   '/_authed/admin/plugins/$key_/tools/$tool': typeof AuthedAdminPluginsKeyToolsToolRoute
 }
@@ -752,6 +867,7 @@ export interface FileRouteTypes {
     | '/approvals'
     | '/bot'
     | '/capabilities'
+    | '/guide'
     | '/inbox'
     | '/make'
     | '/memory'
@@ -786,6 +902,12 @@ export interface FileRouteTypes {
     | '/channel/$channelId'
     | '/channel/new'
     | '/channels/$channelId'
+    | '/cockpit/ci'
+    | '/cockpit/machine'
+    | '/cockpit/projects'
+    | '/cockpit/quality'
+    | '/cockpit/reminders'
+    | '/cockpit/usage'
     | '/connections/$key'
     | '/group/$channelId'
     | '/group/new'
@@ -815,8 +937,13 @@ export interface FileRouteTypes {
     | '/bots/$agentId/routines'
     | '/bots/$agentId/setup'
     | '/bots/$agentId/sharing'
+    | '/cockpit/projects/$name'
+    | '/cockpit/quality/$name'
     | '/tasks/questions/$questionId'
     | '/bots/$agentId/'
+    | '/cockpit/projects/$name/explore'
+    | '/cockpit/usage/project/$name'
+    | '/cockpit/usage/session/$id'
     | '/admin/plugins/$key/bots/$agentId'
     | '/admin/plugins/$key/tools/$tool'
   fileRoutesByTo: FileRoutesByTo
@@ -827,6 +954,7 @@ export interface FileRouteTypes {
     | '/activity'
     | '/approvals'
     | '/bot'
+    | '/guide'
     | '/inbox'
     | '/make'
     | '/memory'
@@ -861,6 +989,12 @@ export interface FileRouteTypes {
     | '/channel/$channelId'
     | '/channel/new'
     | '/channels/$channelId'
+    | '/cockpit/ci'
+    | '/cockpit/machine'
+    | '/cockpit/projects'
+    | '/cockpit/quality'
+    | '/cockpit/reminders'
+    | '/cockpit/usage'
     | '/connections/$key'
     | '/group/$channelId'
     | '/group/new'
@@ -890,8 +1024,13 @@ export interface FileRouteTypes {
     | '/bots/$agentId/routines'
     | '/bots/$agentId/setup'
     | '/bots/$agentId/sharing'
+    | '/cockpit/projects/$name'
+    | '/cockpit/quality/$name'
     | '/tasks/questions/$questionId'
     | '/bots/$agentId'
+    | '/cockpit/projects/$name/explore'
+    | '/cockpit/usage/project/$name'
+    | '/cockpit/usage/session/$id'
     | '/admin/plugins/$key/bots/$agentId'
     | '/admin/plugins/$key/tools/$tool'
   id:
@@ -906,6 +1045,7 @@ export interface FileRouteTypes {
     | '/_authed/_app/approvals'
     | '/_authed/_app/bot'
     | '/_authed/_app/capabilities'
+    | '/_authed/_app/guide'
     | '/_authed/_app/inbox'
     | '/_authed/_app/make'
     | '/_authed/_app/memory'
@@ -941,6 +1081,12 @@ export interface FileRouteTypes {
     | '/_authed/_app/channel/$channelId'
     | '/_authed/_app/channel/new'
     | '/_authed/_app/channels/$channelId'
+    | '/_authed/_app/cockpit/ci'
+    | '/_authed/_app/cockpit/machine'
+    | '/_authed/_app/cockpit/projects'
+    | '/_authed/_app/cockpit/quality'
+    | '/_authed/_app/cockpit/reminders'
+    | '/_authed/_app/cockpit/usage'
     | '/_authed/_app/connections/$key'
     | '/_authed/_app/group/$channelId'
     | '/_authed/_app/group/new'
@@ -970,8 +1116,13 @@ export interface FileRouteTypes {
     | '/_authed/_app/bots/$agentId/routines'
     | '/_authed/_app/bots/$agentId/setup'
     | '/_authed/_app/bots/$agentId/sharing'
+    | '/_authed/_app/cockpit/projects_/$name'
+    | '/_authed/_app/cockpit/quality_/$name'
     | '/_authed/_app/tasks/questions/$questionId'
     | '/_authed/_app/bots/$agentId/'
+    | '/_authed/_app/cockpit/projects_/$name_/explore'
+    | '/_authed/_app/cockpit/usage_/project/$name'
+    | '/_authed/_app/cockpit/usage_/session/$id'
     | '/_authed/admin/plugins/$key_/bots/$agentId'
     | '/_authed/admin/plugins/$key_/tools/$tool'
   fileRoutesById: FileRoutesById
@@ -1058,6 +1209,13 @@ declare module '@tanstack/react-router' {
       path: '/capabilities'
       fullPath: '/capabilities'
       preLoaderRoute: typeof AuthedAppCapabilitiesRouteImport
+      parentRoute: typeof AuthedAppRoute
+    }
+    '/_authed/_app/guide': {
+      id: '/_authed/_app/guide'
+      path: '/guide'
+      fullPath: '/guide'
+      preLoaderRoute: typeof AuthedAppGuideRouteImport
       parentRoute: typeof AuthedAppRoute
     }
     '/_authed/_app/inbox': {
@@ -1319,6 +1477,48 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedAppChannelsChannelIdRouteImport
       parentRoute: typeof AuthedAppRoute
     }
+    '/_authed/_app/cockpit/ci': {
+      id: '/_authed/_app/cockpit/ci'
+      path: '/cockpit/ci'
+      fullPath: '/cockpit/ci'
+      preLoaderRoute: typeof AuthedAppCockpitCiRouteImport
+      parentRoute: typeof AuthedAppRoute
+    }
+    '/_authed/_app/cockpit/machine': {
+      id: '/_authed/_app/cockpit/machine'
+      path: '/cockpit/machine'
+      fullPath: '/cockpit/machine'
+      preLoaderRoute: typeof AuthedAppCockpitMachineRouteImport
+      parentRoute: typeof AuthedAppRoute
+    }
+    '/_authed/_app/cockpit/projects': {
+      id: '/_authed/_app/cockpit/projects'
+      path: '/cockpit/projects'
+      fullPath: '/cockpit/projects'
+      preLoaderRoute: typeof AuthedAppCockpitProjectsRouteImport
+      parentRoute: typeof AuthedAppRoute
+    }
+    '/_authed/_app/cockpit/quality': {
+      id: '/_authed/_app/cockpit/quality'
+      path: '/cockpit/quality'
+      fullPath: '/cockpit/quality'
+      preLoaderRoute: typeof AuthedAppCockpitQualityRouteImport
+      parentRoute: typeof AuthedAppRoute
+    }
+    '/_authed/_app/cockpit/reminders': {
+      id: '/_authed/_app/cockpit/reminders'
+      path: '/cockpit/reminders'
+      fullPath: '/cockpit/reminders'
+      preLoaderRoute: typeof AuthedAppCockpitRemindersRouteImport
+      parentRoute: typeof AuthedAppRoute
+    }
+    '/_authed/_app/cockpit/usage': {
+      id: '/_authed/_app/cockpit/usage'
+      path: '/cockpit/usage'
+      fullPath: '/cockpit/usage'
+      preLoaderRoute: typeof AuthedAppCockpitUsageRouteImport
+      parentRoute: typeof AuthedAppRoute
+    }
     '/_authed/_app/connections/': {
       id: '/_authed/_app/connections/'
       path: '/connections'
@@ -1508,12 +1708,47 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedAppBotsAgentIdSharingRouteImport
       parentRoute: typeof AuthedAppRoute
     }
+    '/_authed/_app/cockpit/projects_/$name': {
+      id: '/_authed/_app/cockpit/projects_/$name'
+      path: '/cockpit/projects/$name'
+      fullPath: '/cockpit/projects/$name'
+      preLoaderRoute: typeof AuthedAppCockpitProjectsNameRouteImport
+      parentRoute: typeof AuthedAppRoute
+    }
+    '/_authed/_app/cockpit/quality_/$name': {
+      id: '/_authed/_app/cockpit/quality_/$name'
+      path: '/cockpit/quality/$name'
+      fullPath: '/cockpit/quality/$name'
+      preLoaderRoute: typeof AuthedAppCockpitQualityNameRouteImport
+      parentRoute: typeof AuthedAppRoute
+    }
     '/_authed/_app/tasks/questions/$questionId': {
       id: '/_authed/_app/tasks/questions/$questionId'
       path: '/questions/$questionId'
       fullPath: '/tasks/questions/$questionId'
       preLoaderRoute: typeof AuthedAppTasksQuestionsQuestionIdRouteImport
       parentRoute: typeof AuthedAppTasksRoute
+    }
+    '/_authed/_app/cockpit/projects_/$name_/explore': {
+      id: '/_authed/_app/cockpit/projects_/$name_/explore'
+      path: '/cockpit/projects/$name/explore'
+      fullPath: '/cockpit/projects/$name/explore'
+      preLoaderRoute: typeof AuthedAppCockpitProjectsNameExploreRouteImport
+      parentRoute: typeof AuthedAppRoute
+    }
+    '/_authed/_app/cockpit/usage_/project/$name': {
+      id: '/_authed/_app/cockpit/usage_/project/$name'
+      path: '/cockpit/usage/project/$name'
+      fullPath: '/cockpit/usage/project/$name'
+      preLoaderRoute: typeof AuthedAppCockpitUsageProjectNameRouteImport
+      parentRoute: typeof AuthedAppRoute
+    }
+    '/_authed/_app/cockpit/usage_/session/$id': {
+      id: '/_authed/_app/cockpit/usage_/session/$id'
+      path: '/cockpit/usage/session/$id'
+      fullPath: '/cockpit/usage/session/$id'
+      preLoaderRoute: typeof AuthedAppCockpitUsageSessionIdRouteImport
+      parentRoute: typeof AuthedAppRoute
     }
     '/_authed/admin/plugins/$key_/bots/$agentId': {
       id: '/_authed/admin/plugins/$key_/bots/$agentId'
@@ -1663,6 +1898,7 @@ interface AuthedAppRouteChildren {
   AuthedAppApprovalsRoute: typeof AuthedAppApprovalsRoute
   AuthedAppBotRoute: typeof AuthedAppBotRoute
   AuthedAppCapabilitiesRoute: typeof AuthedAppCapabilitiesRouteWithChildren
+  AuthedAppGuideRoute: typeof AuthedAppGuideRoute
   AuthedAppInboxRoute: typeof AuthedAppInboxRoute
   AuthedAppMakeRoute: typeof AuthedAppMakeRouteWithChildren
   AuthedAppMemoryRoute: typeof AuthedAppMemoryRoute
@@ -1677,6 +1913,12 @@ interface AuthedAppRouteChildren {
   AuthedAppChannelChannelIdRoute: typeof AuthedAppChannelChannelIdRoute
   AuthedAppChannelNewRoute: typeof AuthedAppChannelNewRoute
   AuthedAppChannelsChannelIdRoute: typeof AuthedAppChannelsChannelIdRoute
+  AuthedAppCockpitCiRoute: typeof AuthedAppCockpitCiRoute
+  AuthedAppCockpitMachineRoute: typeof AuthedAppCockpitMachineRoute
+  AuthedAppCockpitProjectsRoute: typeof AuthedAppCockpitProjectsRoute
+  AuthedAppCockpitQualityRoute: typeof AuthedAppCockpitQualityRoute
+  AuthedAppCockpitRemindersRoute: typeof AuthedAppCockpitRemindersRoute
+  AuthedAppCockpitUsageRoute: typeof AuthedAppCockpitUsageRoute
   AuthedAppConnectionsKeyRoute: typeof AuthedAppConnectionsKeyRoute
   AuthedAppGroupChannelIdRoute: typeof AuthedAppGroupChannelIdRoute
   AuthedAppGroupNewRoute: typeof AuthedAppGroupNewRoute
@@ -1693,7 +1935,12 @@ interface AuthedAppRouteChildren {
   AuthedAppBotsAgentIdRoutinesRoute: typeof AuthedAppBotsAgentIdRoutinesRoute
   AuthedAppBotsAgentIdSetupRoute: typeof AuthedAppBotsAgentIdSetupRoute
   AuthedAppBotsAgentIdSharingRoute: typeof AuthedAppBotsAgentIdSharingRoute
+  AuthedAppCockpitProjectsNameRoute: typeof AuthedAppCockpitProjectsNameRoute
+  AuthedAppCockpitQualityNameRoute: typeof AuthedAppCockpitQualityNameRoute
   AuthedAppBotsAgentIdIndexRoute: typeof AuthedAppBotsAgentIdIndexRoute
+  AuthedAppCockpitProjectsNameExploreRoute: typeof AuthedAppCockpitProjectsNameExploreRoute
+  AuthedAppCockpitUsageProjectNameRoute: typeof AuthedAppCockpitUsageProjectNameRoute
+  AuthedAppCockpitUsageSessionIdRoute: typeof AuthedAppCockpitUsageSessionIdRoute
 }
 
 const AuthedAppRouteChildren: AuthedAppRouteChildren = {
@@ -1701,6 +1948,7 @@ const AuthedAppRouteChildren: AuthedAppRouteChildren = {
   AuthedAppApprovalsRoute: AuthedAppApprovalsRoute,
   AuthedAppBotRoute: AuthedAppBotRoute,
   AuthedAppCapabilitiesRoute: AuthedAppCapabilitiesRouteWithChildren,
+  AuthedAppGuideRoute: AuthedAppGuideRoute,
   AuthedAppInboxRoute: AuthedAppInboxRoute,
   AuthedAppMakeRoute: AuthedAppMakeRouteWithChildren,
   AuthedAppMemoryRoute: AuthedAppMemoryRoute,
@@ -1715,6 +1963,12 @@ const AuthedAppRouteChildren: AuthedAppRouteChildren = {
   AuthedAppChannelChannelIdRoute: AuthedAppChannelChannelIdRoute,
   AuthedAppChannelNewRoute: AuthedAppChannelNewRoute,
   AuthedAppChannelsChannelIdRoute: AuthedAppChannelsChannelIdRoute,
+  AuthedAppCockpitCiRoute: AuthedAppCockpitCiRoute,
+  AuthedAppCockpitMachineRoute: AuthedAppCockpitMachineRoute,
+  AuthedAppCockpitProjectsRoute: AuthedAppCockpitProjectsRoute,
+  AuthedAppCockpitQualityRoute: AuthedAppCockpitQualityRoute,
+  AuthedAppCockpitRemindersRoute: AuthedAppCockpitRemindersRoute,
+  AuthedAppCockpitUsageRoute: AuthedAppCockpitUsageRoute,
   AuthedAppConnectionsKeyRoute: AuthedAppConnectionsKeyRoute,
   AuthedAppGroupChannelIdRoute: AuthedAppGroupChannelIdRoute,
   AuthedAppGroupNewRoute: AuthedAppGroupNewRoute,
@@ -1732,7 +1986,13 @@ const AuthedAppRouteChildren: AuthedAppRouteChildren = {
   AuthedAppBotsAgentIdRoutinesRoute: AuthedAppBotsAgentIdRoutinesRoute,
   AuthedAppBotsAgentIdSetupRoute: AuthedAppBotsAgentIdSetupRoute,
   AuthedAppBotsAgentIdSharingRoute: AuthedAppBotsAgentIdSharingRoute,
+  AuthedAppCockpitProjectsNameRoute: AuthedAppCockpitProjectsNameRoute,
+  AuthedAppCockpitQualityNameRoute: AuthedAppCockpitQualityNameRoute,
   AuthedAppBotsAgentIdIndexRoute: AuthedAppBotsAgentIdIndexRoute,
+  AuthedAppCockpitProjectsNameExploreRoute:
+    AuthedAppCockpitProjectsNameExploreRoute,
+  AuthedAppCockpitUsageProjectNameRoute: AuthedAppCockpitUsageProjectNameRoute,
+  AuthedAppCockpitUsageSessionIdRoute: AuthedAppCockpitUsageSessionIdRoute,
 }
 
 const AuthedAppRouteWithChildren = AuthedAppRoute._addFileChildren(

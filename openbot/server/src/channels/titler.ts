@@ -2,7 +2,7 @@
  * One model call for a few words. Not a Bot and not a turn: a title is not said to anybody and is
  * not part of the conversation it names, so there is no runtime work and no thread to hold.
  */
-import { chatCompletionsUrl } from "../routing/model";
+import { anthropicMessagesUrl, chatCompletionsUrl } from "../routing/model";
 import { markUntrusted } from "../untrusted-content";
 import { oneLine } from "./text";
 
@@ -17,6 +17,8 @@ const INSTRUCTION = [
 export type TitlerOptions = {
   /** The model to ask, from the tenant package. */
   model: string;
+  /** Which API the key belongs to. OpenAI when unset; an Anthropic key sent there is refused (401). */
+  provider?: "openai" | "anthropic";
   /** Resolved per call, so a rotated credential is picked up without a restart. */
   resolveApiKey: () => Promise<string | null>;
   environment?: Record<string, string | undefined>;
@@ -34,24 +36,38 @@ export function createChannelTitler(options: TitlerOptions) {
     const apiKey = await options.resolveApiKey();
     if (!apiKey) return null;
 
+    const environment = options.environment ?? process.env;
+    const anthropic = options.provider === "anthropic";
+    // The excerpt is conversation text, so it is fenced as data.
+    const fenced = markUntrusted(excerpt, "conversation excerpt");
+    // Reasoning tokens come out of this budget, so a cap sized for the answer alone 400s.
     const response = await call(
-      chatCompletionsUrl(options.environment ?? process.env),
+      anthropic ? anthropicMessagesUrl(environment) : chatCompletionsUrl(environment),
       {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          authorization: `Bearer ${apiKey}`,
+          ...(anthropic
+            ? { "x-api-key": apiKey, "anthropic-version": "2023-06-01" }
+            : { authorization: `Bearer ${apiKey}` }),
         },
-        body: JSON.stringify({
-          model: options.model,
-          messages: [
-            { role: "system", content: INSTRUCTION },
-            // The excerpt is conversation text, so it is fenced as data.
-            { role: "user", content: markUntrusted(excerpt, "conversation excerpt") },,
-          ],
-          // Reasoning tokens come out of this budget, so a cap sized for the answer alone 400s.
-          max_completion_tokens: 512,
-        }),
+        body: JSON.stringify(
+          anthropic
+            ? {
+                model: options.model,
+                system: INSTRUCTION,
+                messages: [{ role: "user", content: fenced }],
+                max_tokens: 512,
+              }
+            : {
+                model: options.model,
+                messages: [
+                  { role: "system", content: INSTRUCTION },
+                  { role: "user", content: fenced },
+                ],
+                max_completion_tokens: 512,
+              },
+        ),
         signal: AbortSignal.timeout(options.timeoutMs ?? 20_000),
       },
     );
@@ -66,8 +82,14 @@ export function createChannelTitler(options: TitlerOptions) {
 
     const body = (await response.json()) as {
       choices?: { message?: { content?: unknown } }[];
+      content?: { type?: string; text?: unknown }[];
     };
-    const content = body.choices?.[0]?.message?.content;
+    const content = anthropic
+      ? body.content
+          ?.filter((block) => block.type === "text" && typeof block.text === "string")
+          .map((block) => block.text)
+          .join("") || undefined
+      : body.choices?.[0]?.message?.content;
     if (typeof content !== "string") return null;
     const answer = content.trim();
     return answer.length > 0 ? answer : null;

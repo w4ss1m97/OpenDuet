@@ -1,0 +1,12 @@
+# Le README documente le passage à Anthropic par variables d'environnement :
+#   BOT_PROVIDER=anthropic
+#   ANTHROPIC_API_KEY=...
+#   BOT_MODEL=claude-sonnet-5-5
+# Ce fichier reste sur OpenAI, qui est la voie testée par le projet.
+# Si tu veux Anthropic, mets les variables ci-dessus dans .env plutôt que de
+# changer `provider` ici — le README ne documente le YAML que pour choisir
+# un autre modèle OpenAI.
+model:
+  provider: openai
+  credential_secret_ref: openai-api-key
+  default_model: gpt-5.6-terra
