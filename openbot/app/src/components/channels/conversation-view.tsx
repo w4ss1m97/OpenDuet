@@ -61,6 +61,7 @@ export function ConversationView({
   inShell = false,
   approvals,
   placeholder,
+  initialValue,
   lead,
   folded = false,
 }: {
@@ -135,6 +136,8 @@ export function ConversationView({
   approvals?: readonly ApprovalRequest[];
   /** The composer's empty-state text, e.g. "Message OpenDuet". */
   placeholder?: string;
+  /** Text the composer starts with, for a link that hands over a ready-made first message. */
+  initialValue?: string;
   /** Drawn above the first message; see `ChatTranscript`. */
   lead?: ReactNode;
   /** Draw the lead alone, the conversation folded under it; see `ChatTranscript`. */
@@ -670,6 +673,7 @@ export function ConversationView({
           onSubmit={(draft) => submit(draft, false)}
           {...(presence ? { onTextChange: presence.onTextChange } : {})}
           {...(placeholder ? { placeholder } : {})}
+          {...(initialValue ? { initialValue } : {})}
           /*
            * `inFlight` rather than the `pending` this was given. A drained turn is started from the
            * effect above rather than from the composer, so the composer's own send tracking knows
