@@ -7,6 +7,7 @@ import {
 import { defer, from, type Observable, switchMap } from "rxjs";
 import { z } from "zod";
 import type { GrantedTool } from "@openbot/toolkit/granted-tool";
+import { markUntrusted } from "../untrusted-content";
 import type { MemoryIngestion } from "./ingestion";
 import type { MemoryStore } from "./store";
 import {
@@ -35,8 +36,10 @@ export class PersonalMemoryMiddleware extends Middleware {
   }
   run(input: RunAgentInput, next: AbstractAgent): Observable<BaseEvent> {
     return defer(() => from(this.load(this.botId))).pipe(
-      switchMap((content) =>
-        this.runNext(
+      switchMap((loaded) => {
+        // Memory is distilled from mails and conversations, so it reaches the prompt fenced.
+        const content = loaded ? markUntrusted(loaded, "personal memory") : "";
+        return this.runNext(
           {
             ...input,
             messages: [
@@ -63,8 +66,8 @@ export class PersonalMemoryMiddleware extends Middleware {
             ],
           },
           next,
-        ),
-      ),
+        );
+      }),
     );
   }
 }

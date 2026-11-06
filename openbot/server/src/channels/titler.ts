@@ -3,6 +3,7 @@
  * not part of the conversation it names, so there is no runtime work and no thread to hold.
  */
 import { anthropicMessagesUrl, chatCompletionsUrl } from "../routing/model";
+import { markUntrusted } from "../untrusted-content";
 import { oneLine } from "./text";
 
 /** Rules, not an example: a model copies an example's subject as readily as its shape. */
@@ -37,6 +38,8 @@ export function createChannelTitler(options: TitlerOptions) {
 
     const environment = options.environment ?? process.env;
     const anthropic = options.provider === "anthropic";
+    // The excerpt is conversation text, so it is fenced as data.
+    const fenced = markUntrusted(excerpt, "conversation excerpt");
     // Reasoning tokens come out of this budget, so a cap sized for the answer alone 400s.
     const response = await call(
       anthropic ? anthropicMessagesUrl(environment) : chatCompletionsUrl(environment),
@@ -53,14 +56,14 @@ export function createChannelTitler(options: TitlerOptions) {
             ? {
                 model: options.model,
                 system: INSTRUCTION,
-                messages: [{ role: "user", content: excerpt }],
+                messages: [{ role: "user", content: fenced }],
                 max_tokens: 512,
               }
             : {
                 model: options.model,
                 messages: [
                   { role: "system", content: INSTRUCTION },
-                  { role: "user", content: excerpt },
+                  { role: "user", content: fenced },
                 ],
                 max_completion_tokens: 512,
               },

@@ -7,6 +7,7 @@ import {
 } from "@ag-ui/client";
 import { defer, from, Observable, switchMap } from "rxjs";
 import type { ActorAgentResolver } from "../agents/agent-resolver";
+import { markUntrusted } from "../untrusted-content";
 import type { RunChannel } from "./channels";
 
 /*
@@ -48,8 +49,13 @@ export const RUN_CHANNEL_MESSAGE_ID = "openduet:channel";
 /** What the Bot is told about the channel it is working in. */
 export function runChannelGuidance(channel: RunChannel): string | null {
   if (!channel.purpose) return null;
+  // The name can come from the titler, which reads conversation text, so both go in the fence.
+  const fenced = markUntrusted(
+    `Channel name: ${channel.name}\nPurpose: ${channel.purpose}`,
+    "channel name and purpose",
+  );
   return [
-    `This conversation is the person's channel "${channel.name}". What they want you to know about it, in their words: ${channel.purpose}`,
+    `This conversation is a channel the person set up. Its name and the purpose they gave it:\n${fenced}`,
     "That is the channel's purpose as they set it now: if anything earlier in this conversation says otherwise, it was changed since. Keep the work here about that purpose. Tasks you start or add here belong to this channel.",
   ].join("\n");
 }
