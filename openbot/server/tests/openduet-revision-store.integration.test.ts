@@ -191,3 +191,70 @@ test("deleting an offer keeps its cards; deleting the owner removes them", async
   await database.delete(users).where(inArray(users.id, [who]));
   expect(await store.get(who, card.id)).toBeNull();
 });
+
+const deepDetails = {
+  star: { situation: "s", task: "t", action: "a", result: "r" },
+  underTheHood: "u",
+  architecture: ["A → B : x", "B → C : y", "C → D : z"],
+  traps: [{ question: "q", answer: "a" }],
+  lab: ["1", "2", "3"],
+  value: "v",
+  rescue: ["a", "b", "c"],
+};
+const deep = (over: Partial<NewRevisionCard> = {}) =>
+  draft({ kind: "deep", bulletIds: ["b1"], details: deepDetails, ...over });
+
+test("deep cards keep their details; other kinds store null", async () => {
+  const d = await one(owner, deep());
+  expect(d.details).toEqual(deepDetails);
+  expect((await store.get(owner, d.id))?.details).toEqual(deepDetails);
+  expect((await one(owner)).details).toBeNull();
+});
+
+test("deepKeys lists the owner's deep keys, archived ones too, and nothing else", async () => {
+  const who = `${prefix}-deepkeys`;
+  await database.insert(users).values({ id: who, email: `${who}@example.test` });
+  const live = await one(who, deep({ dedupKey: "dk-live" }));
+  const gone = await one(who, deep({ dedupKey: "dk-gone", bulletIds: ["b2"] }));
+  await store.archive(who, gone.id);
+  await one(who, { dedupKey: "dk-concept" });
+  await one(owner, deep({ dedupKey: "dk-other-owner" }));
+  expect(await store.deepKeys(who)).toEqual(new Set(["dk-live", "dk-gone"]));
+  expect(live.id).toBeTruthy();
+  await database.delete(users).where(inArray(users.id, [who]));
+});
+
+test("touchDeep moves the master hash of the listed deep cards only, for this owner", async () => {
+  const a = await one(owner, deep({ dedupKey: `td-a-${prefix}`, masterHash: "old" }));
+  const b = await one(owner, deep({ dedupKey: `td-b-${prefix}`, masterHash: "old" }));
+  const theirs = await one(other, deep({ dedupKey: `td-a-${prefix}`, masterHash: "old" }));
+  const story = await one(owner, { kind: "story", bulletIds: ["b9"], dedupKey: `td-s-${prefix}`, masterHash: "old" });
+  await store.touchDeep(owner, [`td-a-${prefix}`, `td-s-${prefix}`], "new");
+  expect((await store.get(owner, a.id))?.masterHash).toBe("new");
+  expect((await store.get(owner, b.id))?.masterHash).toBe("old");
+  expect((await store.get(other, theirs.id))?.masterHash).toBe("old");
+  expect((await store.get(owner, story.id))?.masterHash).toBe("old");
+  await store.touchDeep(owner, [], "x");
+});
+
+test("deep cards are stale like story cards when the master hash differs", async () => {
+  const who = `${prefix}-stale-deep`;
+  await database.insert(users).values({ id: who, email: `${who}@example.test` });
+  await one(who, deep({ masterHash: "m1" }));
+  const [fresh] = await store.listToday(who, now, { limit: 5, masterHash: "m1" });
+  expect(fresh.stale).toBe(false);
+  const [old] = await store.listToday(who, now, { limit: 5, masterHash: "m2" });
+  expect(old.stale).toBe(true);
+  expect(old.details).toEqual(deepDetails);
+  await database.delete(users).where(inArray(users.id, [who]));
+});
+
+test("review with expectedReviewCount: a stale count is a conflict and changes nothing", async () => {
+  const card = await one(owner, deep());
+  expect(await store.review(owner, card.id, "good", now, 5)).toEqual({ result: "conflict" });
+  expect((await store.get(owner, card.id))?.reviewCount).toBe(0);
+  const ok = await store.review(owner, card.id, "good", now, 0);
+  expect(ok.result).toBe("ok");
+  expect((await store.get(owner, card.id))?.reviewCount).toBe(1);
+  expect(await store.review(owner, card.id, "good", now, 0)).toEqual({ result: "conflict" });
+});

@@ -64,6 +64,29 @@ test("a story card needs at least one bullet id", async () => {
   await insert({ kind: "pitch", bulletIds: [] });
 });
 
+test("a deep card has details and exactly one bullet; details are null for every other kind", async () => {
+  const insert = (over: Partial<typeof openduetRevisionCards.$inferInsert>) =>
+    Promise.resolve(database.insert(openduetRevisionCards).values(card(over)).execute());
+  const details = {
+    star: { situation: "s", task: "t", action: "a", result: "r" },
+    underTheHood: "u",
+    architecture: ["A → B : x", "B → C : y", "C → D : z"],
+    traps: [{ question: "q", answer: "a" }],
+    lab: ["1", "2", "3"],
+    value: "v",
+    rescue: ["a", "b", "c"],
+  };
+  await expect(insert({ kind: "deep", bulletIds: ["acme-api"], details: null })).rejects.toThrow();
+  await expect(insert({ kind: "deep", bulletIds: [], details })).rejects.toThrow();
+  await expect(insert({ kind: "deep", bulletIds: ["a", "b"], details })).rejects.toThrow();
+  await expect(insert({ kind: "concept", details })).rejects.toThrow();
+  const [row] = await database
+    .insert(openduetRevisionCards)
+    .values(card({ kind: "deep", bulletIds: ["acme-api"], details }))
+    .returning();
+  expect(row.details).toEqual(details);
+});
+
 test("one card per owner and dedup key", async () => {
   const dedupKey = `k:${randomUUID()}`;
   await database.insert(openduetRevisionCards).values(card({ dedupKey }));

@@ -6,8 +6,7 @@ import type { NewRevisionCard } from "./store";
 
 /** Pure builders and parsers of revision cards. The model writes concept cards and picks story bullets; code writes the rest. */
 
-export type CardKind = "concept" | "story" | "pitch";
-
+export type CardKind = "concept" | "story" | "pitch" | "deep";
 
 type SkillGroup = CvMaster["skills"][number];
 export type OfferText = { title: string; company?: string | null; skills: string[]; description?: string | null };
@@ -24,13 +23,19 @@ export function normalizeTopic(topic: string): string {
     .trim();
 }
 
-export function dedupKey(kind: CardKind, input: { topic?: string; bulletIds?: string[] } = {}): string {
+/** Concept by topic, story by sorted bullet ids, deep by bullet id and a hash of its text (an edited bullet is a new card). */
+export function dedupKey(
+  kind: CardKind,
+  input: { topic?: string; bulletIds?: string[]; bulletText?: string } = {},
+): string {
   const part =
     kind === "concept"
       ? normalizeTopic(input.topic ?? "")
       : kind === "story"
         ? [...(input.bulletIds ?? [])].sort().join(",")
-        : "";
+        : kind === "deep"
+          ? `${(input.bulletIds ?? [])[0] ?? ""}|${createHash("sha256").update(normalizeTopic(input.bulletText ?? "")).digest("hex").slice(0, 16)}`
+          : "";
   return createHash("sha256").update(`${kind}|${part}`).digest("hex");
 }
 
@@ -42,7 +47,7 @@ export class RevisionAnswerError extends Error {
   }
 }
 
-function jsonObject(answer: string): unknown {
+export function jsonObject(answer: string): unknown {
   const start = answer.indexOf("{");
   const end = answer.lastIndexOf("}");
   if (start === -1 || end <= start) throw new RevisionAnswerError();
@@ -53,7 +58,7 @@ function jsonObject(answer: string): unknown {
   }
 }
 
-const listOf = (value: unknown, key: string): unknown[] => {
+export const listOf = (value: unknown, key: string): unknown[] => {
   const list = value && typeof value === "object" ? (value as Record<string, unknown>)[key] : null;
   return Array.isArray(list) ? list : [];
 };

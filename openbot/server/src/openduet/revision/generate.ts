@@ -10,11 +10,15 @@ import {
   parseConcepts,
   parseStories,
 } from "./cards";
+import { buildDeepPrompt, deepBullets, deepKeyOf, parseDeepCards } from "./deep-cards";
 import type { NewRevisionCard } from "./store";
 
 /** Background fill of the revision deck (gap filling, single-flight per owner) and the per-offer inline call. */
 
 export const MIN_CONCEPTS_PER_GROUP = 4;
+/** Deep fill: 2 bullets per call, at most 6 calls (12 bullets) per run. */
+export const DEEP_BATCH = 2;
+export const DEEP_MAX_CALLS = 6;
 
 export type CardRow = { kind: string; topic: string; skillGroupId?: string | null; bulletIds?: string[] | null };
 
@@ -23,8 +27,10 @@ export interface RevisionSink {
   insertCards(owner: string, cards: NewRevisionCard[]): Promise<unknown>;
   topicsFor(owner: string, scope: { skillGroupId?: string; offerId?: string }): Promise<string[]>;
   listByOffer(owner: string, offerId: string): Promise<CardRow[]>;
-  list(owner: string, opts: { kind?: "concept" | "story" | "pitch"; limit?: number }): Promise<CardRow[]>;
+  list(owner: string, opts: { kind?: "concept" | "story" | "pitch" | "deep"; limit?: number }): Promise<CardRow[]>;
   countDue(owner: string, now: Date): Promise<{ dueToday: number }>;
+  deepKeys(owner: string): Promise<Set<string>>;
+  touchDeep(owner: string, keys: string[], masterHash: string): Promise<unknown>;
 }
 
 export type MasterRow = { content: unknown; contentHash: string };
@@ -39,7 +45,8 @@ export class RevisionError extends Error {
 export type RevisionStatus = {
   running: boolean;
   lastError: string | null;
-  counts: { concept: number; story: number; pitch: number; due: number };
+  counts: { concept: number; story: number; pitch: number; deep: number; due: number };
+  deep: { running: boolean; lastError: string | null };
 };
 
 export function createRevisionGenerator(deps: {
@@ -52,6 +59,10 @@ export function createRevisionGenerator(deps: {
   const timeout = deps.timeoutMs ?? OFFER_CALL_TIMEOUT_MS;
   const running = new Map<string, Promise<void>>();
   const lastErrors = new Map<string, string>();
+  const deepRunning = new Map<string, Promise<void>>();
+  const deepErrors = new Map<string, string>();
+  /** `owner|hash|bulletId` of bullets whose card the number guard dropped: skipped until the hash changes or the process restarts. */
+  const deepFailed = new Set<string>();
   const now = deps.now ?? (() => new Date());
 
   async function load(owner: string): Promise<{ master: CvMaster; hash: string } | null> {
@@ -93,6 +104,31 @@ export function createRevisionGenerator(deps: {
     if (errors.length) throw new Error(errors[0]);
   }
 
+  /** Deep cards for the bullets that have none (archived ones count), most recent experience first. */
+  async function fillDeep(owner: string): Promise<void> {
+    const loaded = await load(owner);
+    if (!loaded) throw new RevisionError("no_master");
+    const { master, hash } = loaded;
+    const bullets = deepBullets(master);
+    const have = await deps.store.deepKeys(owner);
+    await deps.store.touchDeep(owner, bullets.map(deepKeyOf).filter((k) => have.has(k)), hash);
+    const gap = bullets.filter((b) => !have.has(deepKeyOf(b)) && !deepFailed.has(`${owner}|${hash}|${b.id}`));
+    const errors: string[] = [];
+    for (let i = 0; i < DEEP_MAX_CALLS; i++) {
+      const batch = gap.slice(i * DEEP_BATCH, (i + 1) * DEEP_BATCH);
+      if (batch.length === 0) break;
+      try {
+        const answer = await askModel(deps.complete, buildDeepPrompt(master, batch), timeout);
+        const { cards, rejected } = parseDeepCards(answer, master, hash, batch.map((b) => b.id));
+        for (const id of rejected) deepFailed.add(`${owner}|${hash}|${id}`);
+        await deps.store.insertCards(owner, cards);
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+    if (errors.length) throw new Error(errors[0]);
+  }
+
   return {
     /** Starts the background fill. One run per owner at a time. */
     start(owner: string): "started" | "in_progress" {
@@ -107,22 +143,37 @@ export function createRevisionGenerator(deps: {
       return "started";
     },
 
-    /** Resolves when the owner's run (if any) has ended; for tests and shutdown. */
+    /** Starts the deep-card fill, apart from `start`: its own single-flight per owner. */
+    startDeep(owner: string): "started" | "in_progress" {
+      if (deepRunning.has(owner)) return "in_progress";
+      deepErrors.delete(owner);
+      const job = fillDeep(owner)
+        .catch((error) => {
+          deepErrors.set(owner, error instanceof Error ? error.message : String(error));
+        })
+        .finally(() => deepRunning.delete(owner));
+      deepRunning.set(owner, job);
+      return "started";
+    },
+
+    /** Resolves when the owner's runs (if any) have ended; for tests and shutdown. */
     async idle(owner: string): Promise<void> {
-      await running.get(owner);
+      await Promise.all([running.get(owner), deepRunning.get(owner)]);
     },
 
     async status(owner: string): Promise<RevisionStatus> {
-      const [concepts, stories, pitches, due] = await Promise.all([
+      const [concepts, stories, pitches, deeps, due] = await Promise.all([
         deps.store.list(owner, { kind: "concept", limit: 100 }),
         deps.store.list(owner, { kind: "story", limit: 100 }),
         deps.store.list(owner, { kind: "pitch", limit: 100 }),
+        deps.store.list(owner, { kind: "deep", limit: 100 }),
         deps.store.countDue(owner, now()).then((c) => c.dueToday),
       ]);
       return {
         running: running.has(owner),
         lastError: lastErrors.get(owner) ?? null,
-        counts: { concept: concepts.length, story: stories.length, pitch: pitches.length, due },
+        counts: { concept: concepts.length, story: stories.length, pitch: pitches.length, deep: deeps.length, due },
+        deep: { running: deepRunning.has(owner), lastError: deepErrors.get(owner) ?? null },
       };
     },
 

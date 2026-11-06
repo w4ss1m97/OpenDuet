@@ -6,7 +6,7 @@ import { openduetOffers } from "./openduet-job-offers";
 
 /**
  * A revision card with its Leitner review state (one row each, no review log). `dedup_key` is computed by
- * the caller; the unique index only enforces it. `master_hash` is the master CV a story card was built from.
+ * the caller; the unique index only enforces it. `master_hash` is the master CV a story or deep card was built from.
  */
 export const openduetRevisionCards = pgTable(
   "openduet_revision_cards",
@@ -21,6 +21,7 @@ export const openduetRevisionCards = pgTable(
     offerId: text("offer_id").references(() => openduetOffers.id, { onDelete: "set null" }),
     question: text("question").notNull(),
     answer: text("answer").notNull(),
+    details: jsonb("details").$type<DeepDetails>(),
     keyPoints: jsonb("key_points").$type<string[]>().notNull().default([]),
     bulletIds: text("bullet_ids").array().notNull().default(sql`'{}'::text[]`),
     masterHash: text("master_hash").notNull(),
@@ -37,7 +38,7 @@ export const openduetRevisionCards = pgTable(
   (table) => [
     uniqueIndex("openduet_revision_cards_owner_dedup_idx").on(table.ownerUserId, table.dedupKey),
     index("openduet_revision_cards_owner_due_idx").on(table.ownerUserId, table.archivedAt, table.dueAt),
-    check("openduet_revision_cards_kind_check", sql`${table.kind} IN ('concept', 'story', 'pitch')`),
+    check("openduet_revision_cards_kind_check", sql`${table.kind} IN ('concept', 'story', 'pitch', 'deep')`),
     check("openduet_revision_cards_box_check", sql`${table.box} BETWEEN 1 AND 5`),
     check("openduet_revision_cards_review_count_check", sql`${table.reviewCount} >= 0`),
     check(
@@ -48,9 +49,25 @@ export const openduetRevisionCards = pgTable(
       "openduet_revision_cards_story_check",
       sql`${table.kind} <> 'story' OR cardinality(${table.bulletIds}) >= 1`,
     ),
+    check("openduet_revision_cards_deep_check", sql`(${table.kind} = 'deep') = (${table.details} IS NOT NULL)`),
+    check(
+      "openduet_revision_cards_deep_bullet_check",
+      sql`${table.kind} <> 'deep' OR cardinality(${table.bulletIds}) = 1`,
+    ),
   ],
 );
 
-export type RevisionKind = "concept" | "story" | "pitch";
+/** Model-written coaching of a deep card (kind 'deep' only). Validated by the zod schema in revision/deep-cards.ts. */
+export type DeepDetails = {
+  star: { situation: string; task: string; action: string; result: string };
+  underTheHood: string;
+  architecture: string[];
+  traps: { question: string; answer: string }[];
+  lab: string[];
+  value: string;
+  rescue: string[];
+};
+
+export type RevisionKind = "concept" | "story" | "pitch" | "deep";
 export type RevisionGrade = "again" | "hard" | "good";
 export type OpenduetRevisionCard = typeof openduetRevisionCards.$inferSelect;

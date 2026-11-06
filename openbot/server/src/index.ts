@@ -2886,7 +2886,7 @@ const app = createApp(
       preps: intakePreps,
       debrief: { store: intakeDebriefs, source: anarlogSource },
       offers: { store: intakeOffers, profile: offerProfile, complete: listComplete, cv: cvDeps, revision: revisionGenerator },
-      revision: { store: revisionStore, generator: revisionGenerator, cv: cvStore },
+      revision: { store: revisionStore, generator: revisionGenerator, cv: cvStore, complete: prepComplete },
       career: { store: createCareerStore(database) },
       mailDrafts: {
         store: createMailDraftStore(database),
